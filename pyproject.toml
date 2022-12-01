@@ -1,0 +1,28 @@
+[project]
+name = "aoc2022"
+version = "0.0.1"
+description = "Evan Sultanik's Advent of Code 2022 Solutions."
+authors = [
+    {name = "Evan Sultanik", email="evan@sultanik.com"},
+]
+license = {file = "LICENSE.txt"}
+readme = "README.md"
+requires-python = ">=3.9"
+
+keywords = ["puzzles"]
+
+dependencies = []
+
+[project.urls]
+homepage = "https://github.com/ESultanik/advent-of-code-2022"
+documentation = "https://github.com/ESultanik/advent-of-code-2022"
+repository = "https://github.com/ESultanik/advent-of-code-2022"
+
+[project.scripts]
+poetry = "aoc2022.__main__:main"
+
+[build-system]
+requires = [
+    "setuptools >= 65.0.0",
+]
+build-backend = "setuptools.build_meta"
