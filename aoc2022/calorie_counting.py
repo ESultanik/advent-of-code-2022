@@ -1,3 +1,5 @@
+from heapq import nlargest
+
 from . import challenge, Optional, Path
 
 """
@@ -64,19 +66,39 @@ class Elf:
     def __hash__(self):
         return hash(tuple(self.food_calories))
 
+    @classmethod
+    def load(cls, path: Path) -> ["Elf"]:
+        elves: [Elf] = []
+        with open(path, "r") as f:
+            calories: [int] = []
+            for line in f:
+                line = line.strip()
+                if not line:
+                    elves.append(Elf(*calories))
+                    calories = []
+                else:
+                    calories.append(int(line))
+            if calories:
+                elves.append(Elf(*calories))
+        return elves
+
 
 @challenge(day=1)
 def calorie_counting(path: Path) -> int:
-    elves: [Elf] = []
-    with open(path, "r") as f:
-        calories: [int] = []
-        for line in f:
-            line = line.strip()
-            if not line:
-                elves.append(Elf(*calories))
-                calories = []
-            else:
-                calories.append(int(line))
-        if calories:
-            elves.append(Elf(*calories))
-    return max(e for e in elves).total
+    return max(e for e in Elf.load(path)).total
+
+
+"""
+By the time you calculate the answer to the Elves' question, they've already realized that the Elf carrying the most Calories of food might eventually run out of snacks.
+
+To avoid this unacceptable situation, the Elves would instead like to know the total Calories carried by the top three Elves carrying the most Calories. That way, even if one of those Elves runs out of snacks, they still have two backups.
+
+In the example above, the top three Elves are the fourth Elf (with 24000 Calories), then the third Elf (with 11000 Calories), then the fifth Elf (with 10000 Calories). The sum of the Calories carried by these three elves is 45000.
+
+Find the top three Elves carrying the most Calories. How many Calories are those Elves carrying in total?
+"""
+
+
+@challenge(day=1)
+def top_three_elves(path: Path) -> int:
+    return sum(e.total for e in nlargest(3, Elf.load(path)))
