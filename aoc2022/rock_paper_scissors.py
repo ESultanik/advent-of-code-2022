@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Iterator
+from typing import Iterator, Tuple
 
 from . import challenge, Path
 
@@ -59,6 +59,26 @@ class Move(IntEnum):
         else:
             return Outcome.LOST
 
+    @property
+    def wins_against(self) -> "Move":
+        match self:
+            case Move.ROCK:
+                return Move.SCISSORS
+            case Move.PAPER:
+                return Move.ROCK
+            case Move.SCISSORS:
+                return Move.PAPER
+
+    @property
+    def loses_to(self) -> "Move":
+        match self:
+            case Move.ROCK:
+                return Move.PAPER
+            case Move.PAPER:
+                return Move.SCISSORS
+            case Move.SCISSORS:
+                return Move.ROCK
+
     def __str__(self):
         if self == Move.ROCK:
             return "ROCK"
@@ -69,14 +89,15 @@ class Move(IntEnum):
 
     @classmethod
     def load(cls, code: str) -> "Move":
-        if code in ("A", "X"):
-            return Move.ROCK
-        elif code in ("B", "Y"):
-            return Move.PAPER
-        elif code in ("C", "Z"):
-            return Move.SCISSORS
-        else:
-            raise ValueError(f"Invalid move code: {code!r}")
+        match code:
+            case "A" | "X":
+                return Move.ROCK
+            case "B" | "Y":
+                return Move.PAPER
+            case "C" | "Z":
+                return Move.SCISSORS
+            case _:
+                raise ValueError(f"Invalid move code: {code!r}")
 
 
 @dataclass(frozen=True)
@@ -99,3 +120,50 @@ def load_rounds(path: Path) -> Iterator[Round]:
 @challenge(day=2)
 def total_score(path: Path) -> int:
     return sum(r.score for r in load_rounds(path))
+
+
+"""
+--- Part Two ---
+The Elf finishes helping with the tent and sneaks back over to you. "Anyway, the second column says how the round needs to end: X means you need to lose, Y means you need to end the round in a draw, and Z means you need to win. Good luck!"
+
+The total score is still calculated in the same way, but now you need to figure out what shape to choose so the round ends as indicated. The example above now goes like this:
+
+In the first round, your opponent will choose Rock (A), and you need the round to end in a draw (Y), so you also choose Rock. This gives you a score of 1 + 3 = 4.
+In the second round, your opponent will choose Paper (B), and you choose Rock so you lose (X) with a score of 1 + 0 = 1.
+In the third round, you will defeat your opponent's Scissors with Rock for a score of 1 + 6 = 7.
+Now that you're correctly decrypting the ultra top secret strategy guide, you would get a total score of 12.
+
+Following the Elf's instructions for the second column, what would your total score be if everything goes exactly according to your strategy guide?
+"""
+
+
+def load_rounds_part_2(path: Path) -> Iterator[Tuple[Move, Outcome]]:
+    with open(path, "r") as f:
+        for line in f:
+            their_move, desired_outcome_code = line.split()
+            if desired_outcome_code == "X":
+                desired_outcome = Outcome.LOST
+            elif desired_outcome_code == "Y":
+                desired_outcome = Outcome.DRAW
+            elif desired_outcome_code == "Z":
+                desired_outcome = Outcome.WON
+            else:
+                raise ValueError(f"Unknown desired outcome code: {desired_outcome_code!r}")
+            yield Move.load(their_move), desired_outcome
+
+
+@challenge(day=2)
+def play_according_to_strategy(path: Path) -> int:
+    total_score = 0
+    for opponent_move, desired_outcome in load_rounds_part_2(path):
+        match desired_outcome:
+            case Outcome.DRAW:
+                our_move = opponent_move
+            case Outcome.LOST:
+                our_move = opponent_move.wins_against
+            case Outcome.WON:
+                our_move = opponent_move.loses_to
+            case _:
+                raise ValueError("This should never happen!")
+        total_score += Round(opponent_move=opponent_move, our_move=our_move).score
+    return total_score

@@ -7,7 +7,7 @@ setup(
     author="Evan Sultanik",
     version="1.0",
     packages=find_packages(exclude=['test']),
-    python_requires='>=3.9',
+    python_requires='>=3.10',
     install_requires=[],
     entry_points={
         'console_scripts': [
