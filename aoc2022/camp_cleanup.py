@@ -1,5 +1,5 @@
 import re
-from typing import FrozenSet, Iterable, Iterator, Tuple
+from typing import Iterator, Tuple
 
 from . import challenge, Path
 
