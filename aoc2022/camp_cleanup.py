@@ -58,6 +58,12 @@ class Assignment:
         return isinstance(asmt, Assignment) and self.from_section <= asmt.from_section \
                and self.to_section >= asmt.to_section
 
+    def overlaps(self, asmt: "Assignment") -> bool:
+        return (asmt.from_section <= self.from_section <= asmt.to_section) \
+                or (asmt.to_section >= self.to_section >= asmt.from_section) \
+                or (self.from_section <= asmt.from_section <= self.to_section) \
+                or (self.to_section >= asmt.to_section >= self.from_section)
+
     def __str__(self):
         return f"{self.from_section}-{self.to_section}"
 
@@ -77,3 +83,8 @@ def load_assignment_pairs(path: Path) -> Iterator[Tuple[Assignment, Assignment]]
 @challenge(day=4)
 def fully_contained_assignment_pairs(path: Path) -> int:
     return sum(1 for asmt1, asmt2 in load_assignment_pairs(path) if asmt1 in asmt2 or asmt2 in asmt1)
+
+
+@challenge(day=4)
+def overlapping_assignment_pairs(path: Path) -> int:
+    return sum(1 for asmt1, asmt2 in load_assignment_pairs(path) if asmt1.overlaps(asmt2))
