@@ -34,17 +34,17 @@ zcfzfwzzqfrljwzlrfnpqdbhtmscgvjw: first marker after character 11
 How many characters need to be processed before the first start-of-packet marker is detected?
 """
 
-def seek_to_start(stream: TextIO):
+def seek_to_start(stream: TextIO, marker_len: int = 4):
     history: str = ""
     while True:
         next_byte = stream.read(1)
         if not next_byte:
             raise EOFError("Did not find the start-of-packet marker in the stream!")
-        if len(history) < 4:
+        if len(history) < marker_len:
             history = f"{history}{next_byte}"
         else:
             history = f"{history[1:]}{next_byte}"
-        if len(history) == 4 and len(frozenset(history)) == 4:
+        if len(history) == marker_len and len(frozenset(history)) == marker_len:
             return
 
 
@@ -52,4 +52,28 @@ def seek_to_start(stream: TextIO):
 def find_start(path: Path) -> int:
     with open(path, "r") as f:
         seek_to_start(f)
+        return f.tell()
+
+
+"""
+--- Part Two ---
+Your device's communication system is correctly detecting packets, but still isn't working. It looks like it also needs to look for messages.
+
+A start-of-message marker is just like a start-of-packet marker, except it consists of 14 distinct characters rather than 4.
+
+Here are the first positions of start-of-message markers for all of the above examples:
+
+mjqjpqmgbljsphdztnvjfqwrcgsmlb: first marker after character 19
+bvwbjplbgvbhsrlpgdmjqwftvncz: first marker after character 23
+nppdvjthqldpwncqszvftbrmjlhg: first marker after character 23
+nznrnfrfntjfmvfwmzdfjlvtqnbhcprsg: first marker after character 29
+zcfzfwzzqfrljwzlrfnpqdbhtmscgvjw: first marker after character 26
+How many characters need to be processed before the first start-of-message marker is detected?
+"""
+
+
+@challenge(day=6)
+def find_message_start(path: Path) -> int:
+    with open(path, "r") as f:
+        seek_to_start(f, marker_len=14)
         return f.tell()
