@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 from . import challenge, Path
 
@@ -53,6 +53,9 @@ class Direction(Enum):
             return Direction.EAST
 
 
+UnknownTree = object()
+
+
 class Tree:
     def __init__(self, row: int, col: int, height: int):
         self.row: int = row
@@ -64,44 +67,50 @@ class Tree:
             Direction.EAST: None,
             Direction.WEST: None
         }
-        self.max_height: Dict[Direction, Optional[int]] = {
-            Direction.NORTH: None,
-            Direction.SOUTH: None,
-            Direction.EAST: None,
-            Direction.WEST: None
-        }
-        self._visible: Dict[Direction, Optional[bool]] = {
-            Direction.NORTH: None,
-            Direction.SOUTH: None,
-            Direction.EAST: None,
-            Direction.WEST: None
+        self.highest_tree: Dict[Direction, Optional[Union[Tree, UnknownTree]]] = {
+            Direction.NORTH: UnknownTree,
+            Direction.SOUTH: UnknownTree,
+            Direction.EAST: UnknownTree,
+            Direction.WEST: UnknownTree
         }
 
     @property
     def visible(self) -> Optional[bool]:
-        if any(v for v in self._visible.values()):
+        if any(t is None or t.height < self.height for t in self.highest_tree.values()):
             return True
-        elif all(v is not None and not v for v in self._visible.values()):
+        elif all(v is not None and v is not UnknownTree for v in self.highest_tree.values()):
             return False
         else:
             return None
 
     def is_visible_from(self, direction: Direction) -> Optional[bool]:
-        return self._visible[direction]
+        highest = self.highest_tree[direction]
+        if highest is UnknownTree:
+            return None
+        elif highest is None or highest.height < self.height:
+            return True
+        else:
+            return False
 
-    def set_max_height(self, max_height: int, in_direction: Direction):
-        if max_height == self.max_height[in_direction]:
+    def set_highest_tree(self, highest_tree: Optional["Tree"], in_direction: Direction):
+        existing_highest_tree = self.highest_tree[in_direction]
+        if existing_highest_tree == highest_tree or existing_highest_tree is not UnknownTree:
             return
-        assert self.max_height[in_direction] is None
-        self._visible[in_direction] = max_height < self.height
-        # print(f"({self.row}, {self.col}).max_height in {in_direction} = {max_height};\t"
-        #       f"visible = {self.is_visible_from(in_direction)}")
-        max_height = max(max_height, self.height)
-        self.max_height[in_direction] = max_height
+        # assert existing_highest_tree is UnknownTree
+        if highest_tree is None:
+            next_highest_tree = self
+        else:
+            if self.height >= highest_tree.height:
+                next_highest_tree = self
+            else:
+                next_highest_tree = highest_tree
+        self.highest_tree[in_direction] = highest_tree
+        print(f"{self!s}.next_highest_tree in {in_direction} = {highest_tree!s};\t"
+              f"visible = {self.is_visible_from(in_direction)}")
         # propagate the visibility
         neighbor = self._neighbors[in_direction.opposite]
         if neighbor is not None:
-            neighbor.set_max_height(max_height, in_direction)
+            neighbor.set_highest_tree(next_highest_tree, in_direction)
 
     def add_neighbor(self, tree: "Tree", direction: Direction):
         if self._neighbors[direction] is not None:
@@ -109,16 +118,25 @@ class Tree:
                 return
             raise ValueError()
         self._neighbors[direction] = tree
-        if self.max_height[direction] is None and tree.max_height[direction] is not None:
-            self.set_max_height(tree.max_height[direction], direction)
-        if tree.max_height[direction.opposite] is None and self.max_height[direction.opposite] is not None:
-            tree.set_max_height(self.max_height[direction.opposite], direction.opposite)
+        if self.highest_tree[direction] is UnknownTree:
+            if tree.height >= self.height:
+                self.set_highest_tree(tree, direction)
+            elif tree.highest_tree[direction] is not UnknownTree:
+                self.set_highest_tree(tree.highest_tree[direction], direction)
+        if tree.highest_tree[direction.opposite] is UnknownTree:
+            if self.height >= tree.height:
+                tree.set_highest_tree(self, direction.opposite)
+            elif self.highest_tree[direction.opposite] is not None:
+                tree.set_highest_tree(self.highest_tree[direction.opposite], direction.opposite)
 
     def __eq__(self, other):
         return isinstance(other, Tree) and other.row == self.row and other.col == self.col
 
     def __hash__(self):
         return hash((self.row, self.col))
+
+    def __str__(self):
+        return f"🌲({self.row}, {self.col})↑{self.height}"
 
 
 HeightMatrix = List[List[int]]
@@ -161,21 +179,15 @@ class Forest:
         for i, row in enumerate(heights):
             for j, col in enumerate(row):
                 assert (i, j) not in trees_by_pos
-                visible: Dict[Direction, Optional[bool]] = {
-                    Direction.NORTH: None,
-                    Direction.SOUTH: None,
-                    Direction.EAST: None,
-                    Direction.WEST: None
-                }
                 tree = Tree(row=i, col=j, height=col)
                 if i == 0:
-                    tree.set_max_height(-1, Direction.NORTH)
-                elif i == height - 1:
-                    tree.set_max_height(-1, Direction.SOUTH)
-                elif j == 0:
-                    tree.set_max_height(-1, Direction.WEST)
-                elif j == width - 1:
-                    tree.set_max_height(-1, Direction.EAST)
+                    tree.set_highest_tree(None, Direction.NORTH)
+                if i == height - 1:
+                    tree.set_highest_tree(None, Direction.SOUTH)
+                if j == 0:
+                    tree.set_highest_tree(None, Direction.WEST)
+                if j == width - 1:
+                    tree.set_highest_tree(None, Direction.EAST)
                 trees_by_pos[(i, j)] = tree
         for i in range(height):
             for j in range(width):
@@ -233,3 +245,41 @@ def visible_trees(path: Path) -> int:
     trees = Forest.load(load(path))
     print(str(trees))
     return sum(1 for t in trees if t.visible)
+
+
+"""
+--- Part Two ---
+Content with the amount of tree cover available, the Elves just need to know the best spot to build their tree house: they would like to be able to see a lot of trees.
+
+To measure the viewing distance from a given tree, look up, down, left, and right from that tree; stop if you reach an edge or at the first tree that is the same height or taller than the tree under consideration. (If a tree is right on the edge, at least one of its viewing distances will be zero.)
+
+The Elves don't care about distant trees taller than those found by the rules above; the proposed tree house has large eaves to keep it dry, so they wouldn't be able to see higher than the tree house anyway.
+
+In the example above, consider the middle 5 in the second row:
+
+30373
+25512
+65332
+33549
+35390
+Looking up, its view is not blocked; it can see 1 tree (of height 3).
+Looking left, its view is blocked immediately; it can see only 1 tree (of height 5, right next to it).
+Looking right, its view is not blocked; it can see 2 trees.
+Looking down, its view is blocked eventually; it can see 2 trees (one of height 3, then the tree of height 5 that blocks its view).
+A tree's scenic score is found by multiplying together its viewing distance in each of the four directions. For this tree, this is 4 (found by multiplying 1 * 1 * 2 * 2).
+
+However, you can do even better: consider the tree of height 5 in the middle of the fourth row:
+
+30373
+25512
+65332
+33549
+35390
+Looking up, its view is blocked at 2 trees (by another tree with a height of 5).
+Looking left, its view is not blocked; it can see 2 trees.
+Looking down, its view is also not blocked; it can see 1 tree.
+Looking right, its view is blocked at 2 trees (by a massive tree of height 9).
+This tree's scenic score is 8 (2 * 2 * 1 * 2); this is the ideal spot for the tree house.
+
+Consider each tree on your map. What is the highest scenic score possible for any tree?
+"""
