@@ -92,9 +92,16 @@ class Tree:
         else:
             return False
 
+    def highest_in_direction(self, direction: Direction) -> "Tree":
+        highest = self.highest_tree[direction]
+        if highest is not UnknownTree and highest.height > self.height:
+            return highest
+        else:
+            return self
+
     def set_highest_tree(self, highest_tree: Optional["Tree"], in_direction: Direction):
         existing_highest_tree = self.highest_tree[in_direction]
-        if existing_highest_tree == highest_tree or existing_highest_tree is not UnknownTree:
+        if existing_highest_tree == highest_tree:
             return
         # assert existing_highest_tree is UnknownTree
         if highest_tree is None:
@@ -105,8 +112,8 @@ class Tree:
             else:
                 next_highest_tree = highest_tree
         self.highest_tree[in_direction] = highest_tree
-        print(f"{self!s}.next_highest_tree in {in_direction} = {highest_tree!s};\t"
-              f"visible = {self.is_visible_from(in_direction)}")
+        # print(f"{self!s}.next_highest_tree in {in_direction} = {highest_tree!s};\t"
+        #       f"visible = {self.is_visible_from(in_direction)}")
         # propagate the visibility
         neighbor = self._neighbors[in_direction.opposite]
         if neighbor is not None:
@@ -118,16 +125,6 @@ class Tree:
                 return
             raise ValueError()
         self._neighbors[direction] = tree
-        if self.highest_tree[direction] is UnknownTree:
-            if tree.height >= self.height:
-                self.set_highest_tree(tree, direction)
-            elif tree.highest_tree[direction] is not UnknownTree:
-                self.set_highest_tree(tree.highest_tree[direction], direction)
-        if tree.highest_tree[direction.opposite] is UnknownTree:
-            if self.height >= tree.height:
-                tree.set_highest_tree(self, direction.opposite)
-            elif self.highest_tree[direction.opposite] is not None:
-                tree.set_highest_tree(self.highest_tree[direction.opposite], direction.opposite)
 
     def __eq__(self, other):
         return isinstance(other, Tree) and other.row == self.row and other.col == self.col
@@ -180,6 +177,15 @@ class Forest:
             for j, col in enumerate(row):
                 assert (i, j) not in trees_by_pos
                 tree = Tree(row=i, col=j, height=col)
+                trees_by_pos[(i, j)] = tree
+        for i in range(height):
+            for j in range(width):
+                tree = trees_by_pos[(i, j)]
+                for nrow, ncol, direction in neighborhood(i, j, width, height):
+                    tree.add_neighbor(trees_by_pos[(nrow, ncol)], direction)
+        for i in range(height):
+            for j in range(width):
+                tree = trees_by_pos[(i, j)]
                 if i == 0:
                     tree.set_highest_tree(None, Direction.NORTH)
                 if i == height - 1:
@@ -188,12 +194,6 @@ class Forest:
                     tree.set_highest_tree(None, Direction.WEST)
                 if j == width - 1:
                     tree.set_highest_tree(None, Direction.EAST)
-                trees_by_pos[(i, j)] = tree
-        for i in range(height):
-            for j in range(width):
-                tree = trees_by_pos[(i, j)]
-                for nrow, ncol, direction in neighborhood(i, j, width, height):
-                    tree.add_neighbor(trees_by_pos[(nrow, ncol)], direction)
 
         return cls([[trees_by_pos[(row, col)] for col in range(width)] for row in range(height)])
 
@@ -243,7 +243,7 @@ class Forest:
 @challenge(day=8)
 def visible_trees(path: Path) -> int:
     trees = Forest.load(load(path))
-    print(str(trees))
+    # print(str(trees))
     return sum(1 for t in trees if t.visible)
 
 
