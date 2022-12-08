@@ -168,6 +168,53 @@ class Forest:
     def __getitem__(self, row: int) -> List[Tree]:
         return self.trees[row]
 
+    @property
+    def height(self) -> int:
+        return len(self.trees)
+
+    @property
+    def width(self) -> int:
+        return len(self.trees[0])
+
+    def view_distance(self, tree: Tree, in_direction: Direction) -> int:
+        highest = tree.highest_tree[in_direction]
+        # print(f"Highest for {tree!s} in {in_direction}: {highest!s}")
+        if highest is UnknownTree:
+            raise ValueError()
+        elif highest is None or tree.height > highest.height:
+            if in_direction == Direction.EAST:
+                return self.width - tree.col - 1
+            elif in_direction == Direction.WEST:
+                return tree.col
+            elif in_direction == Direction.SOUTH:
+                return self.height - tree.row - 1
+            else:
+                return tree.row
+        else:
+            # do a manual search
+            row, col = tree.row, tree.col
+            trees = 0
+            while True:
+                if in_direction == Direction.EAST:
+                    col += 1
+                elif in_direction == Direction.WEST:
+                    col -= 1
+                elif in_direction == Direction.SOUTH:
+                    row += 1
+                else:
+                    row -= 1
+                if not (0 <= row < self.height and 0 <= col < self.width):
+                    break
+                h = self.trees[row][col].height
+                trees += 1
+                if h >= tree.height:
+                    break
+            return trees
+
+    def scenic_score(self, tree: Tree):
+        return self.view_distance(tree, Direction.NORTH) * self.view_distance(tree, Direction.EAST) * \
+               self.view_distance(tree, Direction.SOUTH) * self.view_distance(tree, Direction.WEST)
+
     @classmethod
     def load(cls, heights: HeightMatrix) -> "Forest":
         height = len(heights)
@@ -283,3 +330,10 @@ This tree's scenic score is 8 (2 * 2 * 1 * 2); this is the ideal spot for the tr
 
 Consider each tree on your map. What is the highest scenic score possible for any tree?
 """
+
+
+@challenge(day=8)
+def scenic_score(path: Path) -> int:
+    trees = Forest.load(load(path))
+    # print(str(trees))
+    return max(trees.scenic_score(tree) for tree in trees)
