@@ -243,7 +243,7 @@ Simulate your complete hypothetical series of motions. How many positions does t
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterator
+from typing import Iterator, List, Optional
 
 from . import challenge, Path
 
@@ -255,7 +255,24 @@ class Direction(Enum):
     LEFT = "L"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
+class Position:
+    row: int
+    col: int
+
+    def move(self, direction: Direction) -> "Position":
+        match direction:
+            case Direction.UP:
+                return Position(row=self.row + 1, col=self.col)
+            case Direction.DOWN:
+                return Position(row=self.row - 1, col=self.col)
+            case Direction.LEFT:
+                return Position(row=self.row, col=self.col - 1)
+            case Direction.RIGHT:
+                return Position(row=self.row, col=self.col + 1)
+
+
+@dataclass(frozen=True, slots=True)
 class Move:
     direction: Direction
     distance: int
@@ -264,10 +281,67 @@ class Move:
         return f"{self.direction.value} {self.distance}"
 
 
-@dataclass(frozen=True)
-class Position:
-    row: int
-    col: int
+class RopeState:
+    def __init__(self, start_position: Optional[Position] = None):
+        if start_position is None:
+            start_position = Position(0, 0)
+        self.start_position = start_position
+        self.tail_position: Position = start_position
+        self.head_position: Position = start_position
+        self.tail_history: List[Position] = [start_position]
+        self.head_history: List[Position] = [start_position]
+
+    def move(self, direction: Direction):
+        self.head_position = self.head_position.move(direction)
+        self.head_history.append(self.head_position)
+        row_delta = self.head_position.row - self.tail_position.row
+        col_delta = self.head_position.col - self.tail_position.col
+        # print(row_delta, col_delta)
+        if abs(row_delta) > 1 or abs(col_delta) > 1:
+            # we need to move the tail
+            if row_delta > 0:
+                row_delta = min(1, row_delta)
+            elif row_delta < 0:
+                row_delta = max(-1, row_delta)
+            if col_delta > 0:
+                col_delta = min(1, col_delta)
+            elif col_delta < 0:
+                col_delta = max(-1, col_delta)
+            self.tail_position = Position(
+                row=self.tail_position.row + row_delta, col=self.tail_position.col + col_delta
+            )
+            self.tail_history.append(self.tail_position)
+
+    def apply(self, move: Move):
+        for _ in range(move.distance):
+            self.move(move.direction)
+            # print(str(self))
+
+    def __str__(self):
+        history_cols = [
+            p.col for p in self.tail_history + self.head_history
+        ]
+        history_rows = [
+            p.row for p in self.tail_history + self.head_history
+        ]
+        min_col = min(self.head_position.col, self.tail_position.col, self.start_position.col, 0, *history_cols)
+        min_row = min(self.head_position.row, self.tail_position.row, self.start_position.row, 0, *history_rows)
+        max_col = max(self.head_position.col, self.tail_position.col, self.start_position.col, *history_cols)
+        max_row = max(self.head_position.row, self.head_position.row, self.start_position.row, *history_rows)
+        s: List[str] = []
+        for row in range(max_row, min_row - 1, -1):
+            for col in range(min_col, max_col + 1):
+                match Position(row=row, col=col):
+                    case self.head_position:
+                        s.append("H")
+                    case self.tail_position:
+                        s.append("T")
+                    case self.start_position:
+                        s.append("s")
+                    case _:
+                        s.append(".")
+            s.append("\n")
+        return "".join(s)
 
 
 def load(path: Path) -> Iterator[Move]:
@@ -284,6 +358,11 @@ def load(path: Path) -> Iterator[Move]:
 
 
 @challenge(day=9)
-def rope_positions(path: Path):
+def rope_positions(path: Path) -> int:
+    state = RopeState()
+    # print(str(state))
     for move in load(path):
-        print(str(move))
+        state.apply(move)
+        # print(str(state))
+    # print(state.tail_history)
+    return len(frozenset(state.tail_history))
