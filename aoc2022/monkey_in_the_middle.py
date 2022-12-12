@@ -214,7 +214,8 @@ Figure out which monkeys to chase by counting how many items they inspect over 2
 
 from enum import Enum
 import heapq
-from typing import Callable, Dict, Iterable, List, Optional, TextIO
+import math
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, TextIO, Tuple
 
 from tqdm import trange
 
@@ -251,17 +252,22 @@ class Monkey:
         self.num_items_inspected: int = 0
         self.worry_divisor: int = 3
 
-    def take_turn(self, monkeys: Dict[int, "Monkey"]):
+    def next(self, worry_level: int, lcm: Optional[int] = None) -> Tuple[int, int]:
+        operand = self.operand
+        if operand is None:
+            operand = worry_level
+        new_level = self.operator.function(worry_level, operand) // self.worry_divisor
+        if lcm is not None:
+            new_level %= lcm
+        if new_level % self.divisible_by == 0:
+            return new_level, self.if_true
+        else:
+            return new_level, self.if_false
+
+    def take_turn(self, monkeys: Dict[int, "Monkey"], lcm: Optional[int] = None):
         for worry_level in self.items:
             self.num_items_inspected += 1
-            operand = self.operand
-            if operand is None:
-                operand = worry_level
-            new_level = self.operator.function(worry_level, operand) // self.worry_divisor
-            if new_level % self.divisible_by == 0:
-                new_monkey = self.if_true
-            else:
-                new_monkey = self.if_false
+            new_level, new_monkey = self.next(worry_level, lcm)
             monkeys[new_monkey].items.append(new_level)
         self.items = []
 
@@ -442,8 +448,9 @@ def over_nine_thousand_rounds(path: Path) -> int:
     monkeys = load(path)
     for monkey in monkeys.values():
         monkey.worry_divisor = 1
+    lcm = math.lcm(*(i for m in monkeys.values() for i in m.items))
     for _ in trange(10000, desc="simulating", unit="rounds", leave=False):
-        for i in trange(len(monkeys), desc="running round", unit="monkeys", leave=False, delay=2.0):
-            monkeys[i].take_turn(monkeys)
+        for i in trange(len(monkeys), desc="running round", unit="monkeys", leave=False):
+            monkeys[i].take_turn(monkeys, lcm=lcm)
     top_two = heapq.nlargest(2, monkeys.values(), key=lambda m: m.num_items_inspected)
     return top_two[0].num_items_inspected * top_two[1].num_items_inspected
