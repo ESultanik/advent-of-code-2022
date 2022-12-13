@@ -219,5 +219,4 @@ def decoder_key(path: Path) -> int:
     for p in load(path):
         packets.extend(p)
     packets = sorted(packets, key=cmp_to_key(compare))
-    print("\n".join(map(repr, packets)))
     return (packets.index(divider1) + 1) * (packets.index(divider2) + 1)
