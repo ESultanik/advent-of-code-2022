@@ -115,7 +115,7 @@ Using your scan, simulate the falling sand. How many units of sand come to rest 
 """
 
 from enum import Enum
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 from . import challenge, Path
 
@@ -132,7 +132,9 @@ class CaveRow:
         self.row: int = row
 
     def __getitem__(self, col_index: int) -> Space:
-        if self.row not in self.cave.cave:
+        if self.cave.floor_row is not None and self.row >= self.cave.floor_row:
+            return Space.ROCK
+        elif self.row not in self.cave.cave:
             return Space.AIR
         row_dict = self.cave.cave[self.row]
         if col_index not in row_dict:
@@ -141,7 +143,9 @@ class CaveRow:
             return row_dict[col_index]
 
     def __setitem__(self, col_index: int, value: Space):
-        if self.row not in self.cave.cave:
+        if self.cave.floor_row is not None and self.row >= self.cave.floor_row:
+            raise ValueError(f"Cannot change the value at or below the floor of {self.cave.floor_row}!")
+        elif self.row not in self.cave.cave:
             row_dict = {}
             self.cave.cave[self.row] = row_dict
         else:
@@ -161,6 +165,7 @@ class Cave:
         self.min_row: int = 0
         self.sand_row: int = 0
         self.sand_col: int = 500
+        self.floor_row: Optional[int] = None
 
     @property
     def max_row(self) -> int:
@@ -235,10 +240,12 @@ class Cave:
     def simulate(self) -> Iterator[Tuple[int, int]]:
         while True:
             sand_row, sand_col = self.drop_sand()
-            if sand_row > self.max_row:
+            if self.floor_row is None and sand_row > self.max_row:
                 break
             self[sand_row][sand_col] = Space.SAND
             yield sand_row, sand_col
+            if sand_row == self.sand_row and sand_col == self.sand_col:
+                break
 
     def __str__(self):
         min_col = self.min_col
@@ -270,6 +277,53 @@ def load(path: Path) -> Cave:
 @challenge(day=14)
 def units_of_resting_sand(path: Path) -> int:
     cave = load(path)
+    sand_dropped = sum(1 for _ in cave.simulate())
+    print(str(cave))
+    return sand_dropped
+
+
+"""
+--- Part Two ---
+You realize you misread the scan. There isn't an endless void at the bottom of the scan - there's floor, and you're standing on it!
+
+You don't have time to scan the floor, so assume the floor is an infinite horizontal line with a y coordinate equal to two plus the highest y coordinate of any point in your scan.
+
+In the example above, the highest y coordinate of any point is 9, and so the floor is at y=11. (This is as if your scan contained one extra rock path like -infinity,11 -> infinity,11.) With the added floor, the example above now looks like this:
+
+        ...........+........
+        ....................
+        ....................
+        ....................
+        .........#...##.....
+        .........#...#......
+        .......###...#......
+        .............#......
+        .............#......
+        .....#########......
+        ....................
+<-- etc #################### etc -->
+To find somewhere safe to stand, you'll need to simulate falling sand until a unit of sand comes to rest at 500,0, blocking the source entirely and stopping the flow of sand into the cave. In the example above, the situation finally looks like this after 93 units of sand come to rest:
+
+............o............
+...........ooo...........
+..........ooooo..........
+.........ooooooo.........
+........oo#ooo##o........
+.......ooo#ooo#ooo.......
+......oo###ooo#oooo......
+.....oooo.oooo#ooooo.....
+....oooooooooo#oooooo....
+...ooo#########ooooooo...
+..ooooo.......ooooooooo..
+#########################
+Using your scan, simulate the falling sand until the source of the sand becomes blocked. How many units of sand come to rest?
+"""
+
+
+@challenge(day=14)
+def units_of_resting_sand(path: Path) -> int:
+    cave = load(path)
+    cave.floor_row = cave.max_row + 2
     sand_dropped = sum(1 for _ in cave.simulate())
     print(str(cave))
     return sand_dropped
