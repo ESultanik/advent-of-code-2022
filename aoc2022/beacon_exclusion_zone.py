@@ -98,10 +98,10 @@ Consult the report from the sensors you just deployed. In the row where y=200000
 
 from dataclasses import dataclass
 import re
-from typing import Iterator
+from typing import Dict, Iterator
 
 from intervaltree import Interval, IntervalTree
-from tqdm import trange
+from tqdm import tqdm, trange
 
 from . import challenge, Path
 
@@ -145,7 +145,7 @@ class Sensor:
             return IntervalTree()
         tree = IntervalTree([Interval(self.location.x - x_delta, self.location.x + x_delta + 1)])
         if y_delta == 0:
-            tree.addi(self.location.x, self.location.y)
+            tree.addi(self.location.x, self.location.x + 1)
         if in_row == self.closest_beacon.y:
             tree.chop(self.closest_beacon.x, self.closest_beacon.x + 1)
         return tree
@@ -157,6 +157,14 @@ class Sensor:
     @property
     def max_x(self) -> int:
         return self.location.x + self.closest_beacon_distance
+
+    @property
+    def min_y(self) -> int:
+        return self.location.y - self.closest_beacon_distance
+
+    @property
+    def max_y(self) -> int:
+        return self.location.y + self.closest_beacon_distance
 
     @classmethod
     def parse(cls, line: str) -> "Sensor":
@@ -185,3 +193,42 @@ def row_two_million(path: Path) -> int:
         interval.end - interval.begin
         for interval in excluded
     )
+
+
+"""
+--- Part Two ---
+Your handheld device indicates that the distress signal is coming from a beacon nearby. The distress beacon is not detected by any sensor, but the distress beacon must have x and y coordinates each no lower than 0 and no larger than 4000000.
+
+To isolate the distress beacon's signal, you need to determine its tuning frequency, which can be found by multiplying its x coordinate by 4000000 and then adding its y coordinate.
+
+In the example above, the search space is smaller: instead, the x and y coordinates can each be at most 20. With this reduced search area, there is only a single position that could have a beacon: x=14, y=11. The tuning frequency for this distress beacon is 56000011.
+
+Find the only possible position for the distress beacon. What is its tuning frequency?
+"""
+
+
+@challenge(day=15)
+def tuning_frequency(path: Path) -> int:
+    max_value = 4000000
+    sensors = list(load(path))
+    known_beacon_positions = {
+        (sensor.closest_beacon.x, sensor.closest_beacon.y)
+        for sensor in sensors
+    }
+    for y in trange(0, max_value + 1, desc="scanning", unit="row", leave=False):
+        excluded = IntervalTree()
+        for sensor in sensors:
+            if sensor.min_y <= y <= sensor.max_y:
+                excluded |= sensor.excluded_x_values(in_row=y)
+        excluded.merge_overlaps()
+        possible_locations = IntervalTree([Interval(0, max_value + 1)])
+        for interval in excluded:
+            if interval.end > 0 or interval.begin <= max_value:
+                possible_locations.chop(interval.begin, interval.end)
+        for interval in possible_locations:
+            for x in range(interval.begin, interval.end):
+                if (x, y) not in known_beacon_positions:
+                    tqdm.write(f"Beacon: x={x}, y={y}")
+                    return x * 4000000 + y
+    else:
+        raise ValueError("No solution!")
