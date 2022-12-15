@@ -100,6 +100,7 @@ from dataclasses import dataclass
 import re
 from typing import Iterator
 
+from intervaltree import Interval, IntervalTree
 from tqdm import trange
 
 from . import challenge, Path
@@ -136,6 +137,19 @@ class Sensor:
         else:
             return self.location.distance_to(point) > self.closest_beacon_distance
 
+    def excluded_x_values(self, in_row: int) -> IntervalTree:
+        y_delta = abs(self.location.y - in_row)
+        x_delta = self.closest_beacon_distance - y_delta
+        if x_delta < 0:
+            # the row is too far away from our sensor
+            return IntervalTree()
+        tree = IntervalTree([Interval(self.location.x - x_delta, self.location.x + x_delta + 1)])
+        if y_delta == 0:
+            tree.addi(self.location.x, self.location.y)
+        if in_row == self.closest_beacon.y:
+            tree.chop(self.closest_beacon.x, self.closest_beacon.x + 1)
+        return tree
+
     @property
     def min_x(self) -> int:
         return self.location.x - self.closest_beacon_distance
@@ -163,14 +177,11 @@ def load(path: Path) -> Iterator[Sensor]:
 
 @challenge(day=15)
 def row_two_million(path: Path) -> int:
-    sensors = list(load(path))
-    min_x = min(s.min_x for s in sensors)
-    max_x = max(s.max_x for s in sensors)
+    excluded = IntervalTree()
+    for sensor in load(path):
+        excluded |= sensor.excluded_x_values(2000000)
+    excluded.merge_overlaps()
     return sum(
-        1
-        for x in trange(min_x, max_x + 1, unit="columns", leave=False)
-        if any(
-            not s.can_contain_beacon(Point(x=x, y=2000000))
-            for s in sensors
-        )
+        interval.end - interval.begin
+        for interval in excluded
     )
