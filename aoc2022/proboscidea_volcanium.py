@@ -210,6 +210,7 @@ def load(path: Path) -> Dict[str, Valve]:
 class State:
     location: Valve
     open_valves: FrozenSet[Valve]
+    elephant_location: Optional[Valve] = None
 
     @property
     def released_pressure(self):
@@ -252,24 +253,38 @@ class OpenValve(Move):
         )
 
 
-class SearchNode:
-    __slots__ = "state", "parent", "minute", "total_released", "release_potential", "all_valves"
+class ElephantMoveTo(Move):
+    def apply(self, state: State) -> State:
+        if state.elephant_location is None:
+            raise ValueError("No elephant!")
+        elif state.elephant_location.name not in self.valve.neighbors:
+            raise ValueError(f"{self.valve.name} is not connected to {state.location.name}; "
+                             f"its neighbors are {', '.join(self.valve.neighbors.keys())}")
+        return State(
+            location=state.location,
+            elephant_location=state.elephant_location,
+            open_valves=state.open_valves
+        )
 
-    def __init__(self, state: State, parent: Optional["SearchNode"] = None):
+
+class SearchNode:
+    __slots__ = "state", "parent", "total_released", "release_potential", "all_valves", "remaining_minutes"
+
+    def __init__(self, state: State, parent: Optional["SearchNode"] = None, remaining_minutes: int = 29):
         self.state: State = state
         if parent is None:
-            self.minute: int = 1
+            self.remaining_minutes: int = remaining_minutes
             self.total_released: int = 0
             self.parent: Optional[SearchNode] = None
             self.all_valves: List[Valve] = sorted(state.location.dfs(), reverse=True, key=lambda v: v.flow_rate)
         else:
+            self.remaining_minutes = parent.remaining_minutes - 1
+            if self.remaining_minutes < 0:
+                raise ValueError("No time left!")
             self.total_released = parent.total_released + state.released_pressure
-            self.minute = parent.minute + 1
-            if self.minute > 30:
-                raise ValueError("Cannot move past minute 30!")
             self.parent = parent
             self.all_valves = parent.all_valves
-        remaining_minutes = 30 - self.minute
+        remaining_minutes = self.remaining_minutes + 1
         remaining_openings = remaining_minutes // 2
         if remaining_minutes % 2 != 0 and self.state.location not in self.state.open_valves:
             # we can also open the local valve
@@ -282,8 +297,17 @@ class SearchNode:
             for i, v in enumerate(remaining_valves[:remaining_openings])
         )
 
+    @property
+    def minute(self) -> int:
+        m = 1
+        s = self
+        while s.parent is not None:
+            m += 1
+            s = s.parent
+        return m
+
     def successors(self) -> Iterator["SearchNode"]:
-        if self.minute >= 30:
+        if self.remaining_minutes <= 0:
             return
         if self.state.location not in self.state.open_valves and self.state.location.flow_rate > 0:
             yield SearchNode(OpenValve(self.state.location).apply(self.state), self)
@@ -297,11 +321,11 @@ class SearchNode:
         return isinstance(other, SearchNode) and self.release_potential > other.release_potential
 
     def __eq__(self, other):
-        return isinstance(other, SearchNode) and other.state == self.state and other.minute == self.minute \
-               and self.total_released == other.total_released
+        return isinstance(other, SearchNode) and other.state == self.state and \
+               other.remaining_minutes == self.remaining_minutes and self.total_released == other.total_released
 
     def __hash__(self):
-        return hash((self.state, self.minute, self.total_released))
+        return hash((self.state, self.remaining_minutes, self.total_released))
 
     def __str__(self):
         if self.parent is not None:
@@ -339,7 +363,7 @@ def max_pressure(path: Path) -> int:
         i += 1
         if i % 10000 == 0:
             print(node.release_potential)
-        if node.minute >= 30:
+        if node.remaining_minutes == 0:
             print(node)
             return node.total_released
         successors = {s for s in node.successors() if s not in history}
@@ -348,3 +372,85 @@ def max_pressure(path: Path) -> int:
         history |= successors
     else:
         raise ValueError("No solution!")
+
+
+"""
+--- Part Two ---
+You're worried that even with an optimal approach, the pressure released won't be enough. What if you got one of the elephants to help you?
+
+It would take you 4 minutes to teach an elephant how to open the right valves in the right order, leaving you with only 26 minutes to actually execute your plan. Would having two of you working together be better, even if it means having less time? (Assume that you teach the elephant before opening any valves yourself, giving you both the same full 26 minutes.)
+
+In the example above, you could teach the elephant to help you as follows:
+
+== Minute 1 ==
+No valves are open.
+You move to valve II.
+The elephant moves to valve DD.
+
+== Minute 2 ==
+No valves are open.
+You move to valve JJ.
+The elephant opens valve DD.
+
+== Minute 3 ==
+Valve DD is open, releasing 20 pressure.
+You open valve JJ.
+The elephant moves to valve EE.
+
+== Minute 4 ==
+Valves DD and JJ are open, releasing 41 pressure.
+You move to valve II.
+The elephant moves to valve FF.
+
+== Minute 5 ==
+Valves DD and JJ are open, releasing 41 pressure.
+You move to valve AA.
+The elephant moves to valve GG.
+
+== Minute 6 ==
+Valves DD and JJ are open, releasing 41 pressure.
+You move to valve BB.
+The elephant moves to valve HH.
+
+== Minute 7 ==
+Valves DD and JJ are open, releasing 41 pressure.
+You open valve BB.
+The elephant opens valve HH.
+
+== Minute 8 ==
+Valves BB, DD, HH, and JJ are open, releasing 76 pressure.
+You move to valve CC.
+The elephant moves to valve GG.
+
+== Minute 9 ==
+Valves BB, DD, HH, and JJ are open, releasing 76 pressure.
+You open valve CC.
+The elephant moves to valve FF.
+
+== Minute 10 ==
+Valves BB, CC, DD, HH, and JJ are open, releasing 78 pressure.
+The elephant moves to valve EE.
+
+== Minute 11 ==
+Valves BB, CC, DD, HH, and JJ are open, releasing 78 pressure.
+The elephant opens valve EE.
+
+(At this point, all valves are open.)
+
+== Minute 12 ==
+Valves BB, CC, DD, EE, HH, and JJ are open, releasing 81 pressure.
+
+...
+
+== Minute 20 ==
+Valves BB, CC, DD, EE, HH, and JJ are open, releasing 81 pressure.
+
+...
+
+== Minute 26 ==
+Valves BB, CC, DD, EE, HH, and JJ are open, releasing 81 pressure.
+With the elephant helping, after 26 minutes, the best you could do would release a total of 1707 pressure.
+
+With you and an elephant working together for 26 minutes, what is the most pressure you could release?
+"""
+
