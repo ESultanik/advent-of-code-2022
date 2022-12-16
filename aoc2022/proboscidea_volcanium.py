@@ -239,16 +239,18 @@ class MoveTo(Move):
                              f"its neighbors are {', '.join(self.valve.neighbors.keys())}")
         return State(
             location=self.valve,
+            elephant_location=state.elephant_location,
             open_valves=state.open_valves
         )
 
 
 class OpenValve(Move):
     def apply(self, state: State) -> State:
-        if state.location != self.valve:
-            raise ValueError(f"Not at location {state.location}!")
+        if state.location != self.valve and (state.elephant_location is None or state.elephant_location != self.valve):
+            raise ValueError(f"Not at location {self.valve.name}!")
         return State(
             location=state.location,
+            elephant_location=state.elephant_location,
             open_valves=state.open_valves | frozenset({self.valve})
         )
 
@@ -262,7 +264,7 @@ class ElephantMoveTo(Move):
                              f"its neighbors are {', '.join(self.valve.neighbors.keys())}")
         return State(
             location=state.location,
-            elephant_location=state.elephant_location,
+            elephant_location=self.valve,
             open_valves=state.open_valves
         )
 
@@ -309,10 +311,26 @@ class SearchNode:
     def successors(self) -> Iterator["SearchNode"]:
         if self.remaining_minutes <= 0:
             return
+        your_moves = []
         if self.state.location not in self.state.open_valves and self.state.location.flow_rate > 0:
-            yield SearchNode(OpenValve(self.state.location).apply(self.state), self)
+            your_moves.append(OpenValve(self.state.location))
         for neighbor in self.state.location.neighbors.values():
-            yield SearchNode(MoveTo(neighbor).apply(self.state), self)
+            your_moves.append(MoveTo(neighbor))
+        elephant_moves = []
+        if self.state.elephant_location is not None:
+            if self.state.elephant_location not in self.state.open_valves and \
+                    self.state.elephant_location.flow_rate > 0:
+                elephant_moves.append(OpenValve(self.state.elephant_location))
+            for neighbor in self.state.elephant_location.neighbors.values():
+                elephant_moves.append(ElephantMoveTo(neighbor))
+        if your_moves and elephant_moves:
+            for m1 in your_moves:
+                for m2 in elephant_moves:
+                    yield SearchNode(m2.apply(m1.apply(self.state)), self)
+        elif your_moves:
+            yield from (SearchNode(m.apply(self.state), self) for m in your_moves)
+        elif elephant_moves:
+            yield from (SearchNode(m.apply(self.state), self) for m in elephant_moves)
         if len(self.state.open_valves) == len(self.all_valves):
             # all of the valves are open, so do nothing:
             yield SearchNode(self.state, self)
@@ -334,8 +352,7 @@ class SearchNode:
                 s = f"{s}You move to valve {self.state.location.name}\n\n"
             elif self.parent.state.open_valves != self.state.open_valves:
                 opened = self.state.open_valves - self.parent.state.open_valves
-                assert len(opened) == 1
-                s = f"{s}You open valve {next(iter(opened)).name}\n\n"
+                s = f"{s}Valves Opened: {', '.join((v.name for v in opened))}\n\n"
             else:
                 s = f"{s}\n"
         else:
@@ -349,13 +366,8 @@ class SearchNode:
         return s
 
 
-@challenge(day=16)
-def max_pressure(path: Path) -> int:
-    valves = load(path)
-    for valve_name in sorted(valves.keys()):
-        print(str(valves[valve_name]))
-    initial_state = State(location=valves["AA"], open_valves=frozenset())
-    queue = [SearchNode(initial_state)]
+def solve(initial_state: State, total_minutes: int = 30) -> int:
+    queue = [SearchNode(initial_state, remaining_minutes=total_minutes - 1)]
     history = set()
     i = 0
     while queue:
@@ -372,6 +384,15 @@ def max_pressure(path: Path) -> int:
         history |= successors
     else:
         raise ValueError("No solution!")
+
+
+@challenge(day=16)
+def max_pressure(path: Path) -> int:
+    valves = load(path)
+    for valve_name in sorted(valves.keys()):
+        print(str(valves[valve_name]))
+    initial_state = State(location=valves["AA"], open_valves=frozenset())
+    return solve(initial_state)
 
 
 """
@@ -454,3 +475,11 @@ With the elephant helping, after 26 minutes, the best you could do would release
 With you and an elephant working together for 26 minutes, what is the most pressure you could release?
 """
 
+
+@challenge(day=16)
+def with_elephant_helping(path: Path):
+    valves = load(path)
+    for valve_name in sorted(valves.keys()):
+        print(str(valves[valve_name]))
+    initial_state = State(location=valves["AA"], elephant_location=valves["AA"], open_valves=frozenset())
+    return solve(initial_state, total_minutes=26)
