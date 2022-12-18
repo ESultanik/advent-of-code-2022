@@ -335,7 +335,7 @@ How many units tall will the tower of rocks be after 2022 rocks have stopped fal
 
 from enum import Enum
 import sys
-from typing import Dict, Optional, Sequence, Set, TextIO, Tuple
+from typing import Dict, List, Optional, Sequence, Set, TextIO, Tuple
 
 from . import challenge, Path
 
@@ -416,12 +416,27 @@ class Push(Enum):
         self.col_delta: int = col_delta
 
 
+CaveState = Tuple[int, Tuple[Tuple[bool, ...], ...]]
+
+
 class Cave:
     def __init__(self, jet_pattern: Sequence[Push], width: int = 7):
         self.jet_pattern: Sequence[Push] = jet_pattern
         self.jet_state: int = 0
         self.width: int = width
         self.tower: Tower = Tower()
+
+    @property
+    def state(self) -> CaveState:
+        if self.tower.height == 0:
+            return self.jet_state, ((True,) * self.width,) * 5
+        return (
+            self.jet_state,
+            tuple(
+                tuple(self.tower[(self.tower.height - row - 1, c)] for c in range(self.width))
+                for row in range(5)
+            )
+        )
 
     def drop(self, shape: Shape, print_steps: bool = False):
         row = self.tower.height + 3
@@ -491,3 +506,69 @@ def tower_height(path: Path) -> int:
     for rock in range(2022):
         cave.drop(shapes[rock % len(shapes)])  # , print_steps=True)
     return cave.tower.height
+
+
+"""
+--- Part Two ---
+The elephants are not impressed by your simulation. They demand to know how tall the tower will be after 1000000000000 rocks have stopped! Only then will they feel confident enough to proceed through the cave.
+
+In the example above, the tower would be 1514285714288 units tall!
+
+How tall will the tower be after 1000000000000 rocks have stopped?
+"""
+
+
+@challenge(day=17)
+def lots_of_rocks(path: Path) -> int:
+    with open(path, "r") as f:
+        jet_pattern = [
+            [Push.LEFT, Push.RIGHT][c == ">"]
+            for c in f.read()
+            if c in "<>"
+        ]
+    cave = Cave(jet_pattern)
+    shapes = [Shape.H_BAR, Shape.PLUS, Shape.BACK_L, Shape.V_BAR, Shape.BOX]
+    rock = 0
+    states: List[Tuple[int, CaveState]] = [
+        (rock, cave.state)
+    ]
+    state_height: Dict[Tuple[int, CaveState], int] = {
+        states[0]: 0
+    }
+    state_index: Dict[Tuple[int, CaveState], int] = {
+        states[0]: 0
+    }
+    while True:
+        cave.drop(shapes[rock])
+        rock = (rock + 1) % len(shapes)
+        next_state = (rock, cave.state)
+        if next_state in state_index:
+            break
+        states.append(next_state)
+        state_height[next_state] = cave.tower.height
+        state_index[next_state] = len(states) - 1
+    start_index = state_index[next_state]
+    cycle_length = len(states) - start_index
+    print(f"Cycle length: {cycle_length}")
+    remaining_drops = 1000000000000 - start_index - 1
+    print(f"Remaining drops: {remaining_drops}")
+    cycles = remaining_drops // cycle_length
+    print(f"Number of full cycles: {cycles}")
+    remaining_drops_after_cycles = remaining_drops % cycle_length
+    print(f"Remaining drops after cycles: {remaining_drops_after_cycles}")
+    # print(repr(next_state))
+    print(f"Start index: {start_index}, End index: {len(states) - 1}")
+    if start_index == 0:
+        cycle_start_height = 0
+    else:
+        cycle_start_height = state_height[states[start_index - 1]]
+    print(f"Cycle start height: {cycle_start_height}")
+    cycle_height_delta = state_height[states[-1]] - cycle_start_height
+    print(f"Cycle height delta: {cycle_height_delta}")
+    final_height = cycle_start_height + cycles * cycle_height_delta
+    if remaining_drops_after_cycles > 0:
+        remaining_height = state_height[states[start_index + remaining_drops_after_cycles - 1]] - cycle_start_height
+        print(f"Remaining height: {remaining_height}")
+        assert remaining_height <= cycle_height_delta
+        final_height += remaining_height
+    return final_height
