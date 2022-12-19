@@ -428,13 +428,18 @@ class Cave:
 
     @property
     def state(self) -> CaveState:
-        if self.tower.height == 0:
-            return self.jet_state, ((True,) * self.width,) * 5
+        tower_rows = 20
+        height = self.tower.height
+        if height < tower_rows:
+            return self.jet_state, tuple(
+               tuple(self.tower[(height - row - 1, c)] for c in range(self.width))
+               for row in range(height)
+            ) + ((True,) * self.width,) * (tower_rows - height)
         return (
             self.jet_state,
             tuple(
-                tuple(self.tower[(self.tower.height - row - 1, c)] for c in range(self.width))
-                for row in range(5)
+                tuple(self.tower[(height - row - 1, c)] for c in range(self.width))
+                for row in range(tower_rows)
             )
         )
 
@@ -529,28 +534,23 @@ def lots_of_rocks(path: Path) -> int:
     cave = Cave(jet_pattern)
     shapes = [Shape.H_BAR, Shape.PLUS, Shape.BACK_L, Shape.V_BAR, Shape.BOX]
     rock = 0
-    states: List[Tuple[int, CaveState]] = [
-        (rock, cave.state)
-    ]
-    state_height: Dict[Tuple[int, CaveState], int] = {
-        states[0]: 0
-    }
-    state_index: Dict[Tuple[int, CaveState], int] = {
-        states[0]: 0
-    }
-    while True:
+    states: List[Tuple[int, CaveState]] = []
+    state_height_delta: List[int] = []
+    state_index: Dict[Tuple[int, CaveState], int] = {}
+    next_state: Tuple[int, CaveState] = (rock, cave.state)
+    while next_state not in state_index:
+        height_before = cave.tower.height
         cave.drop(shapes[rock])
+        state_index[next_state] = len(states)
+        states.append(next_state)
+        state_height_delta.append(cave.tower.height - height_before)
         rock = (rock + 1) % len(shapes)
         next_state = (rock, cave.state)
-        if next_state in state_index:
-            break
-        states.append(next_state)
-        state_height[next_state] = cave.tower.height
-        state_index[next_state] = len(states) - 1
     start_index = state_index[next_state]
     cycle_length = len(states) - start_index
     print(f"Cycle length: {cycle_length}")
-    remaining_drops = 1000000000000 - start_index - 1
+    pre_cycle_drops = len(states) - cycle_length
+    remaining_drops = 1000000000000 - pre_cycle_drops
     print(f"Remaining drops: {remaining_drops}")
     cycles = remaining_drops // cycle_length
     print(f"Number of full cycles: {cycles}")
@@ -561,13 +561,15 @@ def lots_of_rocks(path: Path) -> int:
     if start_index == 0:
         cycle_start_height = 0
     else:
-        cycle_start_height = state_height[states[start_index - 1]]
+        cycle_start_height = sum(state_height_delta[:start_index])
     print(f"Cycle start height: {cycle_start_height}")
-    cycle_height_delta = state_height[states[-1]] - cycle_start_height
+    cycle_height_delta = sum(state_height_delta[start_index:])
     print(f"Cycle height delta: {cycle_height_delta}")
     final_height = cycle_start_height + cycles * cycle_height_delta
     if remaining_drops_after_cycles > 0:
-        remaining_height = state_height[states[start_index + remaining_drops_after_cycles - 1]] - cycle_start_height
+        remaining_height = sum(
+            state_height_delta[start_index:start_index + remaining_drops_after_cycles]
+        )
         print(f"Remaining height: {remaining_height}")
         assert remaining_height <= cycle_height_delta
         final_height += remaining_height
