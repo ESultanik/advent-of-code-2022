@@ -428,20 +428,21 @@ class Cave:
 
     @property
     def state(self) -> CaveState:
-        tower_rows = 20
         height = self.tower.height
-        if height < tower_rows:
-            return self.jet_state, tuple(
-               tuple(self.tower[(height - row - 1, c)] for c in range(self.width))
-               for row in range(height)
-            ) + ((True,) * self.width,) * (tower_rows - height)
-        return (
-            self.jet_state,
-            tuple(
-                tuple(self.tower[(height - row - 1, c)] for c in range(self.width))
-                for row in range(tower_rows)
-            )
-        )
+        if height == 0:
+            return self.jet_state, ((True,) * self.width,)
+        row = 0
+        cave_rows: List[Tuple[bool, ...]] = []
+        has_stone: Tuple[bool, ...] = (False,) * self.width
+        while row < height:
+            new_row = tuple(self.tower[(height - row - 1, c)] for c in range(self.width))
+            cave_rows.append(new_row)
+            has_stone = tuple(a or b for a, b in zip(has_stone, new_row))
+            if all(has_stone):
+                # every column has at least one stone
+                break
+            row += 1
+        return self.jet_state, tuple(cave_rows)
 
     def drop(self, shape: Shape, print_steps: bool = False):
         row = self.tower.height + 3
