@@ -122,7 +122,67 @@ class Expression:
         self.operator: Operator = operator
         self.rhs: Operand = rhs
 
-    def __eq__(self, other) -> "Expression":
+    def solve(self, desired_value: int = 1, kb: Optional["KnowledgeBase"] = None) -> Dict[Symbol, int]:
+        if not isinstance(self.lhs, int) and kb is not None:
+            lhs: Operand = kb.simplify(self.lhs)[0]
+        else:
+            lhs = self.lhs
+        if not isinstance(self.rhs, int) and kb is not None:
+            rhs: Operand = kb.simplify(self.rhs)[0]
+        else:
+            rhs = self.rhs
+        # at least one of the sides should be a constant
+        rhs_constant = isinstance(rhs, int)
+        lhs_constant = isinstance(lhs, int)
+        if not lhs_constant and not rhs_constant:
+            raise NotImplementedError()
+        elif lhs_constant and rhs_constant:
+            if self.operator.execute(lhs, rhs) != desired_value:
+                raise ValueError(f"{self!s} != {desired_value}")
+            else:
+                return {}
+        elif rhs_constant and self.operator != Operator.DIVIDE and self.operator != Operator.SUBTRACT:
+            lhs, rhs = rhs, lhs
+        match self.operator:
+            case Operator.EQUALS:
+                if desired_value == 0:
+                    raise NotImplementedError()
+                elif isinstance(rhs, Symbol):
+                    return {rhs: lhs}
+                else:
+                    return rhs.solve(desired_value=lhs)
+            case Operator.ADD:
+                if isinstance(rhs, Symbol):
+                    return {rhs: desired_value - lhs}
+                else:
+                    return rhs.solve(desired_value=desired_value-lhs)
+            case Operator.MULTIPLY:
+                if isinstance(rhs, Symbol):
+                    return {rhs: desired_value // lhs}
+                else:
+                    return rhs.solve(desired_value=desired_value // lhs)
+            case Operator.SUBTRACT:
+                if isinstance(lhs, Symbol):
+                    return {lhs: desired_value + rhs}
+                elif not lhs_constant:
+                    return lhs.solve(desired_value=desired_value + rhs)
+                elif isinstance(rhs, Symbol):
+                    return {rhs: lhs - desired_value}
+                else:
+                    return rhs.solve(desired_value=lhs - desired_value)
+            case Operator.DIVIDE:
+                if isinstance(lhs, Symbol):
+                    return {lhs: desired_value * rhs}
+                elif not lhs_constant:
+                    return lhs.solve(desired_value=desired_value * rhs)
+                elif isinstance(rhs, Symbol):
+                    return {rhs: lhs // desired_value}
+                else:
+                    return rhs.solve(desired_value=lhs // desired_value)
+            case _:
+                raise NotImplementedError()
+
+    def __eq__(self, other):
         if not isinstance(other, Expression) or self.operator != other.operator:
             return False
         elif self.lhs == other.lhs and self.rhs == other.rhs:
@@ -254,7 +314,7 @@ class KnowledgeBase:
                     results[i] = simplified
                 if isinstance(simplified, int):
                     remaining.remove(i)
-        return [result for result, original in zip(results, expressions) if result != original]
+        return results
 
     @classmethod
     def load(cls, path: Path) -> "KnowledgeBase":
@@ -305,6 +365,7 @@ def root_equality_test(path: Path) -> int:
     root = kb["root"]
     root = Expression(lhs=root.lhs, rhs=root.rhs, operator=Operator.EQUALS)
     kb["root"] = root
-    kb["humn"] = Symbol("humn")
-    equation = root.simplify(kb)
-
+    humn = Symbol("humn")
+    kb["humn"] = humn
+    root = kb.simplify("root")[0]
+    return root.solve(kb=kb)[humn]
