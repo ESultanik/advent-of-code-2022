@@ -75,7 +75,8 @@ Follow the path given in the monkeys' notes. What is the final password?
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Iterable, Iterator, List, Mapping, Tuple
+from functools import lru_cache
+from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 from . import challenge, Path
 
@@ -93,6 +94,22 @@ class Space(Enum):
         raise ValueError(f"No such space: {s!r}")
 
 
+class Facing(Enum):
+    EAST = (0, ">", 0, 1)
+    SOUTH = (1, "v", 1, 0)
+    WEST = (2, "<", 0, -1)
+    NORTH = (3, "^", -1, 0)
+
+    def __init__(self, password: int, symbol: str, row_delta: int, col_delta: int):
+        self.password: int = password
+        self.symbol: str = symbol
+        self.row_delta: int = row_delta
+        self.col_delta: int = col_delta
+
+    def __str__(self):
+        return self.symbol
+
+
 class Map:
     def __init__(self, rows: Iterable[Mapping[int, Space]]):
         self.rows: List[Dict[int, Space]] = [
@@ -104,8 +121,70 @@ class Map:
             for row in rows
         ]
 
+    @property
+    def starting_col(self) -> int:
+        return min(self.rows[0].keys())
+
+    def get(self, row: int, col: int) -> Space:
+        if row < 0 or row >= len(self.rows) or col not in self.rows[row]:
+            return Space.OUTSIDE
+        else:
+            return self.rows[row][col]
+
+    @lru_cache(maxsize=10000000)
+    def wraps_to(self, row: int, col: int, facing: Facing) -> Tuple[int, int]:
+        assert self.get(row, col) == Space.OUTSIDE
+        # move in the opposite direction and return the last non-outside cell before going outside
+        while True:
+            row -= facing.row_delta
+            col -= facing.col_delta
+            if self.get(row, col) == Space.OUTSIDE:
+                # we got to the other side, so move back inside
+                row += facing.row_delta
+                col += facing.col_delta
+                break
+        return row, col
+
+    @property
+    def width(self) -> int:
+        return max(
+            max(row.keys())
+            for row in self.rows
+        ) + 1
+
+    def __str__(self):
+        return "\n".join((
+            "".join((
+                self.get(row, col).value
+                for col in range(self.width)
+            ))
+            for row in range(len(self.rows))
+        ))
+
+
+class State:
+    def __init__(
+            self, board: Map, row: Optional[int] = None, col: Optional[int] = None, facing: Facing = Facing.EAST
+    ):
+        self.board: Map = board
+        if row is None or col is None:
+            self.row: int = 0
+            self.col: int = board.starting_col
+        else:
+            self.row = row
+            self.col = col
+        self.facing: Facing = facing
+
+    @property
+    def password(self) -> int:
+        return 1000 * (self.row + 1) + 4 * (self.col + 1) + self.facing.password
+
 
 class Move(ABC):
+    @abstractmethod
+    def apply(self, state: State) -> State:
+        raise NotImplementedError()
+
     @abstractmethod
     def __str__(self):
         raise NotImplementedError()
@@ -122,7 +201,7 @@ class Move(ABC):
                 moves = moves[1:]
             else:
                 number = ""
-                while ord("0") <= ord(moves[0]) <= ord("9"):
+                while moves and ord("0") <= ord(moves[0]) <= ord("9"):
                     number = f"{number}{moves[0]}"
                     moves = moves[1:]
                 if not number:
@@ -134,16 +213,55 @@ class MoveForward(Move):
     def __init__(self, distance: int):
         self.distance: int = distance
 
+    def apply(self, state: State) -> State:
+        for _ in range(self.distance):
+            new_row = state.row + state.facing.row_delta
+            new_col = state.col + state.facing.col_delta
+            next_space = state.board.get(new_row, new_col)
+            if next_space == Space.OUTSIDE:
+                # wrap around
+                new_row, new_col = state.board.wraps_to(new_row, new_col, state.facing)
+                next_space = state.board.get(new_row, new_col)
+            if next_space == Space.WALL:
+                # we hit a wall, so stop
+                break
+            state = State(board=state.board, row=new_row, col=new_col, facing=state.facing)
+        return state
+
     def __str__(self):
         return str(self.distance)
 
 
 class TurnClockwise(Move):
+    def apply(self, state: State) -> State:
+        if state.facing == Facing.EAST:
+            new_heading = Facing.SOUTH
+        elif state.facing == Facing.SOUTH:
+            new_heading = Facing.WEST
+        elif state.facing == Facing.WEST:
+            new_heading = Facing.NORTH
+        else:
+            assert state.facing == Facing.NORTH
+            new_heading = Facing.EAST
+        return State(board=state.board, row=state.row, col=state.col, facing=new_heading)
+
     def __str__(self):
         return "R"
 
 
 class TurnCounterClockwise(Move):
+    def apply(self, state: State) -> State:
+        if state.facing == Facing.EAST:
+            new_heading = Facing.NORTH
+        elif state.facing == Facing.NORTH:
+            new_heading = Facing.WEST
+        elif state.facing == Facing.WEST:
+            new_heading = Facing.SOUTH
+        else:
+            assert state.facing == Facing.SOUTH
+            new_heading = Facing.EAST
+        return State(board=state.board, row=state.row, col=state.col, facing=new_heading)
+
     def __str__(self):
         return "L"
 
@@ -152,7 +270,7 @@ def load(path: Path) -> Tuple[Map, List[Move]]:
     rows: List[Dict[int, Space]] = []
     with open(path, "r") as f:
         for line in f:
-            line = line.strip()
+            line = line.rstrip()
             if not line:
                 break
             rows.append({
@@ -168,6 +286,7 @@ def load(path: Path) -> Tuple[Map, List[Move]]:
 @challenge(day=22)
 def final_password(path: Path) -> int:
     m, moves = load(path)
-    print(str(m))
-    print()
-    print("".join(map(str, moves)))
+    state = State(m)
+    for move in moves:
+        state = move.apply(state)
+    return state.password
