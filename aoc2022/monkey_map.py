@@ -132,7 +132,9 @@ class Map:
             return self.rows[row][col]
 
     @lru_cache(maxsize=10000000)
-    def wraps_to(self, row: int, col: int, facing: Facing) -> Tuple[int, int]:
+    def wraps_to(self, row: int, col: int, facing: Facing) -> Tuple[int, int, Facing]:
+        row += facing.row_delta
+        col += facing.col_delta
         assert self.get(row, col) == Space.OUTSIDE
         # move in the opposite direction and return the last non-outside cell before going outside
         while True:
@@ -143,7 +145,7 @@ class Map:
                 row += facing.row_delta
                 col += facing.col_delta
                 break
-        return row, col
+        return row, col, facing
 
     @property
     def width(self) -> int:
@@ -217,15 +219,16 @@ class MoveForward(Move):
         for _ in range(self.distance):
             new_row = state.row + state.facing.row_delta
             new_col = state.col + state.facing.col_delta
+            new_facing = state.facing
             next_space = state.board.get(new_row, new_col)
             if next_space == Space.OUTSIDE:
                 # wrap around
-                new_row, new_col = state.board.wraps_to(new_row, new_col, state.facing)
+                new_row, new_col, new_facing = state.board.wraps_to(state.row, state.col, new_facing)
                 next_space = state.board.get(new_row, new_col)
             if next_space == Space.WALL:
                 # we hit a wall, so stop
                 break
-            state = State(board=state.board, row=new_row, col=new_col, facing=state.facing)
+            state = State(board=state.board, row=new_row, col=new_col, facing=new_facing)
         return state
 
     def __str__(self):
@@ -289,4 +292,247 @@ def final_password(path: Path) -> int:
     state = State(m)
     for move in moves:
         state = move.apply(state)
+    return state.password
+
+
+"""
+--- Part Two ---
+As you reach the force field, you think you hear some Elves in the distance. Perhaps they've already arrived?
+
+You approach the strange input device, but it isn't quite what the monkeys drew in their notes. Instead, you are met with a large cube; each of its six faces is a square of 50x50 tiles.
+
+To be fair, the monkeys' map does have six 50x50 regions on it. If you were to carefully fold the map, you should be able to shape it into a cube!
+
+In the example above, the six (smaller, 4x4) faces of the cube are:
+
+        1111
+        1111
+        1111
+        1111
+222233334444
+222233334444
+222233334444
+222233334444
+        55556666
+        55556666
+        55556666
+        55556666
+You still start in the same position and with the same facing as before, but the wrapping rules are different. Now, if you would walk off the board, you instead proceed around the cube. From the perspective of the map, this can look a little strange. In the above example, if you are at A and move to the right, you would arrive at B facing down; if you are at C and move down, you would arrive at D facing up:
+
+        ...#
+        .#..
+        #...
+        ....
+...#.......#
+........#..A
+..#....#....
+.D........#.
+        ...#..B.
+        .....#..
+        .#......
+        ..C...#.
+Walls still block your path, even if they are on a different face of the cube. If you are at E facing up, your movement is blocked by the wall marked by the arrow:
+
+        ...#
+        .#..
+     -->#...
+        ....
+...#..E....#
+........#...
+..#....#....
+..........#.
+        ...#....
+        .....#..
+        .#......
+        ......#.
+Using the same method of drawing the last facing you had with an arrow on each tile you visit, the full path taken by the above example now looks like this:
+
+        >>v#    
+        .#v.    
+        #.v.    
+        ..v.    
+...#..^...v#    
+.>>>>>^.#.>>    
+.^#....#....    
+.^........#.    
+        ...#..v.
+        .....#v.
+        .#v<<<<.
+        ..v...#.
+The final password is still calculated from your final position and facing from the perspective of the map. In this example, the final row is 5, the final column is 7, and the final facing is 3, so the final password is 1000 * 5 + 4 * 7 + 3 = 5031.
+
+Fold the map into a cube, then follow the path given in the monkeys' notes. What is the final password?
+"""
+
+
+class Cube(Map):
+    def __init__(self, board: Map):
+        initial_empty = min(board.rows[0].keys())
+        if initial_empty % 2 != 0:
+            raise ValueError(f"{initial_empty} is not even")
+        self.dimension: int = initial_empty // 2
+        for row in range(self.dimension):
+            if (
+                    min(board.rows[row].keys()) != initial_empty
+                    or
+                    max(board.rows[row].keys()) + 1 != self.dimension * 3
+            ):
+                raise ValueError(f"Invalid row for a {self.dimension}x{self.dimension} cube: {board.rows[row]!r}")
+        for row in range(self.dimension, self.dimension * 2):
+            if (
+                    min(board.rows[row].keys()) != 0
+                    or
+                    max(board.rows[row].keys()) + 1 != self.dimension * 3
+            ):
+                raise ValueError(f"Invalid row for a {self.dimension}x{self.dimension} cube: {board.rows[row]!r}")
+        for row in range(self.dimension * 2, self.dimension * 3):
+            if (
+                    min(board.rows[row].keys()) != initial_empty
+                    or
+                    max(board.rows[row].keys()) + 1 != self.dimension * 4
+            ):
+                raise ValueError(f"Invalid row for a {self.dimension}x{self.dimension} cube: {board.rows[row]!r}")
+        super().__init__(board.rows)
+
+    def face(self, row: int, col: int) -> int:
+        if row < self.dimension and self.dimension * 2 <= col < self.dimension * 3:
+            face = 1
+        elif col < self.dimension <= row < self.dimension * 2:
+            face = 2
+        elif col < self.dimension * 2 and self.dimension <= row < self.dimension * 2:
+            face = 3
+        elif col < self.dimension * 3 and self.dimension <= row < self.dimension * 2:
+            face = 4
+        elif self.dimension * 2 <= col < self.dimension * 3 and self.dimension * 2 <= row < self.dimension * 3:
+            face = 5
+        elif self.dimension * 2 <= row < self.dimension * 3 <= col < self.dimension * 4:
+            face = 6
+        else:
+            raise ValueError(f"<row={row}, col={col}> is not on the cube!")
+        return face
+
+    @lru_cache(maxsize=10000000)
+    def wraps_to(self, row: int, col: int, facing: Facing) -> Tuple[int, int, Facing]:
+        face = self.face(row, col)
+        if face == 1:
+            if facing == Facing.WEST:
+                # moving to face 3
+                facing = Facing.SOUTH
+                col = self.dimension + row
+                row = self.dimension
+                assert self.face(row, col) == 3
+            elif facing == Facing.NORTH:
+                # moving to face 2
+                facing = Facing.SOUTH
+                col = self.dimension - (col - self.dimension * 2) - 1
+                row = self.dimension
+                assert self.face(row, col) == 2
+            elif facing == Facing.EAST:
+                # move to face 6
+                facing = Facing.WEST
+                row = self.dimension * 3 - row - 1
+                col = self.dimension * 4 - 1
+                assert self.face(row, col) == 6
+            else:
+                raise ValueError("This should never happen")
+        elif face == 2:
+            if facing == Facing.NORTH:
+                # moving to face 1
+                facing = Facing.SOUTH
+                col = self.dimension * 2 + (self.dimension - col - 1)
+                row = 0
+                assert self.face(row, col) == 1
+            elif facing == Facing.WEST:
+                # moving to face 6
+                facing = Facing.NORTH
+                col = self.dimension * 4 - (row - self.dimension) - 1
+                row = self.dimension * 3 - 1
+                assert self.face(row, col) == 6
+            elif facing == Facing.SOUTH:
+                # moving to face 5
+                facing = Facing.NORTH
+                col = self.dimension * 2 + (self.dimension - col - 1)
+                row = self.dimension * 3 - 1
+                assert self.face(row, col) == 5
+            else:
+                raise ValueError("This should never happen")
+        elif face == 3:
+            if facing == Facing.NORTH:
+                # moving to face 1
+                facing = Facing.EAST
+                row = col - self.dimension
+                col = self.dimension * 2
+                assert self.face(row, col) == 1
+            elif facing == Facing.SOUTH:
+                # moving to face 5
+                facing = Facing.EAST
+                row = self.dimension * 2 + (self.dimension - (col - self.dimension))
+                col = self.dimension * 2
+                assert self.face(row, col) == 5
+            else:
+                raise ValueError("This should never happen")
+        elif face == 4:
+            if facing == Facing.EAST:
+                # moving to face 6
+                facing = Facing.SOUTH
+                col = self.dimension * 4 - (row - self.dimension) - 1
+                row = self.dimension * 2
+                assert self.face(row, col) == 6
+            else:
+                raise ValueError("This should never happen")
+        elif face == 5:
+            if facing == Facing.WEST:
+                # moving to face 3
+                facing = Facing.NORTH
+                col = self.dimension * 2 - (row - self.dimension * 2) - 1
+                row = self.dimension * 2 - 1
+                assert self.face(row, col) == 3
+            elif facing == Facing.SOUTH:
+                # moving to face 2
+                facing = Facing.NORTH
+                col = self.dimension - (col - self.dimension * 2) - 1
+                row = self.dimension * 2 - 1
+                assert self.face(row, col) == 2
+            else:
+                raise ValueError("This should never happen")
+        elif face == 6:
+            if facing == Facing.NORTH:
+                # moving to face 4
+                facing = Facing.WEST
+                row = self.dimension + (self.dimension - (col - self.dimension * 3))
+                col = self.dimension * 3 - 1
+                assert self.face(row, col) == 4
+            elif facing == Facing.EAST:
+                # moving to face 1
+                facing = Facing.WEST
+                row = self.dimension - (col - self.dimension * 3) - 1
+                col = self.dimension * 3 - 1
+                assert self.face(row, col) == 1
+            elif facing == Facing.SOUTH:
+                # moving to face 2
+                facing = Facing.EAST
+                row = self.dimension * 2 - (col - self.dimension * 3) - 1
+                col = 0
+                assert self.face(row, col) == 2
+            else:
+                raise ValueError("This should never happen")
+        else:
+            raise NotImplementedError()
+        return row, col, facing
+
+
+@challenge(day=22)
+def cube_folding(path: Path) -> int:
+    m, moves = load(path)
+    cube = Cube(m)
+    state = State(cube)
+    rows: List[List[str]] = [list(row) for row in str(cube).split("\n")]
+    rows[state.row][state.col] = state.facing.symbol
+    for move in moves:
+        state = move.apply(state)
+        rows[state.row][state.col] = state.facing.symbol
+    print("\n".join((
+        "".join(row)
+        for row in rows
+    )))
     return state.password
