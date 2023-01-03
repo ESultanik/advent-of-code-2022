@@ -8,7 +8,7 @@ setup(
     version="1.0",
     packages=find_packages(exclude=['test']),
     python_requires='>=3.10',
-    install_requires=["tqdm"],
+    install_requires=["tqdm", "intervaltree"],
     entry_points={
         'console_scripts': [
             'aoc2022 = aoc2022.__main__:main'
