@@ -233,8 +233,10 @@ What is the fewest number of minutes required to avoid the blizzards and reach t
 """
 
 from enum import Enum
+from functools import lru_cache
 import heapq
-from typing import Dict, List, Iterable, Iterator, Optional, Sequence, Set, Tuple
+from math import lcm
+from typing import List, Iterator, Optional, Set, Tuple
 
 from . import challenge, Path
 
@@ -254,62 +256,82 @@ class Direction(Enum):
 Position = Tuple[int, int]
 
 
-class State:
-    __slots__ = "width", "height", "expedition", "_blizzards"
-
-    def __init__(
-            self, width: int, height: int, expedition: Position, blizzards: Iterable[Tuple[Direction, Position]],
-            _blizzards: Optional[Dict[Position, List[Direction]]] = None
-    ):
-        self.width: int = width
+class Blizzards:
+    def __init__(self, height: int, width: int, blizzards: Tuple[Tuple[Direction, Position], ...]):
         self.height: int = height
-        self.expedition: Position = expedition
-        if _blizzards:
-            self._blizzards = _blizzards
-        else:
-            self._blizzards: Dict[Position, List[Direction]] = {}
-            for d, p in blizzards:
-                if p not in self._blizzards:
-                    self._blizzards[p] = [d]
-                else:
-                    self._blizzards[p].append(d)
+        self.width: int = width
+        self.blizzards: Tuple[Tuple[Direction, Position], ...] = blizzards
+        self.max_state: int = lcm(height, width)
 
-    def __getitem__(self, position: Position) -> Sequence[Direction]:
-        if position not in self._blizzards:
-            return []
-        else:
-            return self._blizzards[position]
+    @lru_cache(maxsize=100000)
+    def blizzard_positions(self, state: int) -> Tuple[Position, ...]:
+        return tuple((
+            (
+                (row + direction.row_delta * state) % self.height,
+                (col + direction.col_delta * state) % self.width
+            )
+            for direction, (row, col) in self.blizzards
+        ))
+
+
+class State:
+    __slots__ = "width", "height", "expedition", "blizzards", "blizzard_state"
+
+    def __init__(self, expedition: Position, blizzards: Blizzards, blizzard_state: int = 0):
+        self.expedition: Position = expedition
+        self.blizzards: Blizzards = blizzards
+        self.blizzard_state = blizzard_state % blizzards.max_state
+
+    def blizzard_positions(self) -> Tuple[Position, ...]:
+        return self.blizzards.blizzard_positions(self.blizzard_state)
+
+    def is_open(self, position: Position) -> bool:
+        return not any(position == pos for pos in self.blizzard_positions())
+
+    def num_blizzards(self, position: Position) -> int:
+        return sum(1 for pos in self.blizzard_positions() if pos == position)
+
+    def blizzards_at(self, position: Position) -> Iterator[Direction]:
+        for direction, (row, col) in self.blizzards.blizzards:
+            blizzard_pos = (
+                (row + direction.row_delta * self.blizzard_state) % self.height,
+                (col + direction.col_delta * self.blizzard_state) % self.width
+            )
+            if position == blizzard_pos:
+                yield direction
 
     def __eq__(self, other):
-        return isinstance(other, State) and self.expedition == other.expedition and self._blizzards == other._blizzards
+        return self.expedition == other.expedition and self.blizzard_state == other.blizzard_state
 
     def __hash__(self):
-        return hash((self.expedition, frozenset(self._blizzards.keys())))
+        return hash((self.expedition, self.blizzard_state))
 
     @property
     def goal(self) -> Position:
-        return self.height, self.width - 1
+        return self.blizzards.height, self.blizzards.width - 1
 
     def successors(self) -> Iterator["State"]:
         # first move the blizzards:
-        moved_blizzards: List[Tuple[Direction, Position]] = [
-            (d, ((row + d.row_delta) % self.height, (col + d.col_delta) % self.width))
-            for (row, col), blizzards in self._blizzards.items()
-            for d in blizzards
-        ]
-        base_state = State(width=self.width, height=self.height, expedition=self.expedition, blizzards=moved_blizzards)
-        if not base_state[base_state.expedition]:
+        base_state = State(
+            expedition=self.expedition,
+            blizzards=self.blizzards,
+            blizzard_state=self.blizzard_state + 1
+        )
+        if base_state.is_open(base_state.expedition):
             # it is safe to wait
             yield base_state
         for d in Direction:
-            new_row, new_col = base_state.expedition[0] + d.row_delta, base_state.expedition[1] + d.col_delta
+            new_pos = base_state.expedition[0] + d.row_delta, base_state.expedition[1] + d.col_delta
             if (
-                    (0 <= new_row < self.height and 0 <= new_col < self.width)
-                    and not base_state[(new_row, new_col)]
-            ) or ((new_row, new_col) == self.goal):
+                    (0 <= new_pos[0] < self.blizzards.height and 0 <= new_pos[1] < self.blizzards.width)
+                    and base_state.is_open(new_pos)
+            ) or (new_pos == self.goal):
                 # it is a valid move
-                yield State(width=self.width, height=self.height, expedition=(new_row, new_col), blizzards=(),
-                            _blizzards=base_state._blizzards)
+                yield State(
+                    expedition=new_pos,
+                    blizzards=base_state.blizzards,
+                    blizzard_state=base_state.blizzard_state
+                )
 
     @classmethod
     def load(cls, path: Path) -> "State":
@@ -327,7 +349,7 @@ class State:
                         if c == d.symbol:
                             blizzards.append((d, (row - 1, col)))
                             break
-            return cls(width=width, height=row - 1, expedition=(-1, 0), blizzards=blizzards)
+            return cls(expedition=(-1, 0), blizzards=Blizzards(width=width, height=row - 1, blizzards=tuple(blizzards)))
 
     def __str__(self):
         rows: List[str] = [
@@ -339,14 +361,14 @@ class State:
                 p = (row, col)
                 if p == self.expedition:
                     line.append("E")
-                elif self[p]:
-                    blizzards = self[p]
+                else:
+                    blizzards = list(self.blizzards_at(p))
                     if len(blizzards) > 1:
                         line.append(str(len(blizzards)))
-                    else:
+                    elif len(blizzards) == 1:
                         line.append(blizzards[0].symbol)
-                else:
-                    line.append(".")
+                    else:
+                        line.append(".")
             line.append("#")
             rows.append("".join(line))
         rows.append(f"#{'#' * (self.width - 1)}{['.', 'E'][self.expedition == self.goal]}#")
@@ -385,7 +407,7 @@ class SearchNode:
 
 def search(state: State) -> SearchNode:
     queue = [SearchNode(state)]
-    history: Set[SearchNode] = set(queue)
+    # history: Set[SearchNode] = set(queue)
     iteration = 0
     while queue:
         node = heapq.heappop(queue)
@@ -397,8 +419,8 @@ def search(state: State) -> SearchNode:
             return node
         for successor in node.state.successors():
             succ = SearchNode(successor, parent=node)
-            if succ not in history:
-                heapq.heappush(queue, succ)
+            # if succ not in history:
+            heapq.heappush(queue, succ)
     raise ValueError("Did not find a path to the goal!")
 
 
