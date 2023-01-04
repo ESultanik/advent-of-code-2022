@@ -393,6 +393,60 @@ Fold the map into a cube, then follow the path given in the monkeys' notes. What
 """
 
 
+class Transform(ABC):
+    @abstractmethod
+    def transform(self, row: int, col: int) -> Tuple[int, int]:
+        raise NotImplementedError()
+
+    def __add__(self, addend: "Transform") -> "AffineTransform":
+        return AffineTransform(self, addend)
+
+
+class Rotation(Transform):
+    def __init__(self, face: "Face", degrees_clockwise: int):
+        if degrees_clockwise % 90 != 0:
+            raise ValueError("Rotation must be a multiple of 90 degrees!")
+        self.face: Face = face
+        self.degrees_clockwise: int = degrees_clockwise
+
+    def transform(self, row: int, col: int) -> Tuple[int, int]:
+        if self.degrees_clockwise % 360 == 0:
+            return row, col
+        row_offset = row - self.face.row
+        col_offset = col - self.face.col
+        new_row, new_col = self.face.row, self.face.col
+        if self.degrees_clockwise % 270 == 0:
+            new_row += self.face.cube.dimension - 1 - col_offset
+            new_col += row_offset
+        elif self.degrees_clockwise % 180 == 0:
+            new_row += self.face.cube.dimension - 1 - row_offset
+            new_col += self.face.cube.dimension - 1 - col_offset
+        else:
+            assert self.degrees_clockwise % 90 == 0
+            new_row += col_offset
+            new_col += self.face.cube.dimension - 1 - row_offset
+        return new_row, new_col
+
+
+class AffineTransform(Transform):
+    def __init__(self, *transforms: Transform):
+        self.transforms: Tuple[Transform, ...] = tuple(transforms)
+
+    def transform(self, row: int, col: int) -> Tuple[int, int]:
+        for t in self.transforms:
+            row, col = t.transform(row, col)
+        return row, col
+
+
+class Translation(Transform):
+    def __init__(self, row_delta: int, col_delta: int):
+        self.row_delta: int = row_delta
+        self.col_delta: int = col_delta
+
+    def transform(self, row: int, col: int) -> Tuple[int, int]:
+        return row + self.row_delta, col + self.col_delta
+
+
 class Face:
     def __init__(self, cube: "Cube", row: int, col: int):
         self.cube: Cube = cube
@@ -406,6 +460,30 @@ class Face:
 
     def __hash__(self):
         return hash((self.cube.dimension, self.row, self.col))
+
+    def transform_to_meet(self, neighbor: Facing) -> Transform:
+        if neighbor not in self.neighbors:
+            raise ValueError(f"There is no neighbor facing {neighbor}")
+        neighbor_edge, n = self.neighbors[neighbor]
+        rotation = 0
+        desired_edge = neighbor_edge.opposite
+        while neighbor != desired_edge:
+            rotation += 1
+            neighbor = neighbor.rotate_clockwise(1)
+        translate_to_row = n.row
+        translate_to_col = n.col
+        match neighbor_edge:
+            case Facing.NORTH:
+                translate_to_row -= n.cube.dimension
+            case Facing.SOUTH:
+                translate_to_row += n.cube.dimension
+            case Facing.EAST:
+                translate_to_col += n.cube.dimension
+            case Facing.WEST:
+                translate_to_col -= n.cube.dimension
+        row_delta = translate_to_row - self.row
+        col_delta = translate_to_col - self.col
+        return AffineTransform(Rotation(self, rotation * 90), Translation(row_delta, col_delta))
 
     def get_neighbor_edge(self, neighbor: Facing, map_direction: Facing) -> Tuple[Optional[Facing], Optional["Face"]]:
         if neighbor not in self.neighbors:
@@ -449,53 +527,12 @@ class Face:
             raise ValueError(f"<row={row}, col={col}> is not on this face!")
         elif facing not in self.neighbors:
             raise ValueError(f"<row={row}, col={col}> with facing {facing.symbol} does not wrap!")
-        row_offset = row - self.row
-        col_offset = col - self.col
+        transform = self.transform_to_meet(facing)
+        next_row, next_col = row + facing.row_delta, col + facing.col_delta
+        trow, tcol = transform.transform(next_row, next_col)
         neighbor_edge, neighbor = self.neighbors[facing]
-        if facing == neighbor_edge.opposite:
-            return neighbor.row + row_offset, neighbor.col + col_offset, neighbor_edge.opposite
-        new_row = neighbor.row
-        new_col = neighbor.col
-        match neighbor_edge:
-            case Facing.EAST:
-                new_col += self.cube.dimension - 1
-                match facing:
-                    case Facing.EAST:
-                        new_row += self.cube.dimension - 1 - row_offset
-                    case Facing.NORTH:
-                        new_row += self.cube.dimension - 1 - col_offset
-                    case Facing.SOUTH:
-                        new_row += col_offset
-                    case _:
-                        raise NotImplementedError(str(facing))
-            case Facing.WEST:
-                match facing:
-                    case Facing.NORTH:
-                        new_row += col_offset
-                    case Facing.WEST:
-                        new_row += self.cube.dimension - 1 - row_offset
-                    case _:
-                        raise NotImplementedError(str(facing))
-            case Facing.NORTH:
-                match facing:
-                    case Facing.WEST:
-                        new_col += row_offset
-                    case Facing.EAST:
-                        new_col += self.cube.dimension - 1 - row_offset
-                    case _:
-                        raise NotImplementedError(str(facing))
-            case Facing.SOUTH:
-                new_row += self.cube.dimension - 1
-                match facing:
-                    case Facing.EAST:
-                        new_col += row_offset
-                    case Facing.SOUTH:
-                        new_col += self.cube.dimension - 1 - col_offset
-                    case _:
-                        raise NotImplementedError(str(facing))
-            case _:
-                raise NotImplementedError(str(neighbor_edge))
-        return new_row, new_col, neighbor_edge.opposite
+        assert neighbor.contains(trow, tcol)
+        return trow, tcol, neighbor_edge.opposite
 
 
 class Cube(Map):
