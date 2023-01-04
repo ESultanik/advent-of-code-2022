@@ -215,6 +215,9 @@ class Grove:
             else:
                 self._elves[row].add(col)
 
+    def __eq__(self, other):
+        return isinstance(other, Grove) and frozenset(self) == frozenset(other)
+
     def is_ground(self, row: int, col: int) -> bool:
         return row not in self._elves or col not in self._elves[row]
 
@@ -339,6 +342,8 @@ class Round:
             for to_pos, from_positions in proposals.items()
             if len(from_positions) == 1
         }
+        if not to_move:
+            raise StopIteration()
         unmoved: Set[Position] = {p for p in self.grove if p not in to_move}
         next_directions = self.directions[1:] + (self.directions[0],)
         return Round(Grove(chain(to_move.values(), unmoved)), next_directions)
@@ -352,3 +357,18 @@ def empty_ground_tiles(path: Path) -> int:
         r = r.next()
     print(str(r.grove))
     return r.grove.empty_tiles()
+
+
+@challenge(day=23)
+def first_round_with_no_movement(path: Path) -> int:
+    grove = Grove.load(path)
+    r = Round(grove)
+    i = 0
+    while True:
+        i += 1
+        try:
+            r = r.next()
+        except StopIteration:
+            break
+    print(str(r.grove))
+    return i
