@@ -234,7 +234,7 @@ What is the fewest number of minutes required to avoid the blizzards and reach t
 
 from enum import Enum
 import heapq
-from typing import Dict, List, Iterable, Iterator, Optional, Sequence, Tuple
+from typing import Dict, List, Iterable, Iterator, Optional, Sequence, Set, Tuple
 
 from . import challenge, Path
 
@@ -385,6 +385,7 @@ class SearchNode:
 
 def search(state: State) -> SearchNode:
     queue = [SearchNode(state)]
+    history: Set[SearchNode] = set(queue)
     iteration = 0
     while queue:
         node = heapq.heappop(queue)
@@ -395,7 +396,9 @@ def search(state: State) -> SearchNode:
             # we are done!
             return node
         for successor in node.state.successors():
-            heapq.heappush(queue, SearchNode(successor, parent=node))
+            succ = SearchNode(successor, parent=node)
+            if succ not in history:
+                heapq.heappush(queue, succ)
     raise ValueError("Did not find a path to the goal!")
 
 
