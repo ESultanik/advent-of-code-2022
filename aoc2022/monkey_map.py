@@ -76,6 +76,7 @@ Follow the path given in the monkeys' notes. What is the final password?
 from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
+from math import isqrt
 from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 from . import challenge, Path
@@ -105,6 +106,33 @@ class Facing(Enum):
         self.symbol: str = symbol
         self.row_delta: int = row_delta
         self.col_delta: int = col_delta
+
+    @property
+    def opposite(self) -> "Facing":
+        match self:
+            case Facing.EAST:
+                return Facing.WEST
+            case Facing.WEST:
+                return Facing.EAST
+            case Facing.NORTH:
+                return Facing.SOUTH
+            case Facing.SOUTH:
+                return Facing.NORTH
+
+    def rotate_clockwise(self, n: int = 1) -> "Facing":
+        f = self
+        while n % 4 > 0:
+            match f:
+                case Facing.EAST:
+                    f = Facing.SOUTH
+                case Facing.WEST:
+                    f = Facing.NORTH
+                case Facing.SOUTH:
+                    f = Facing.WEST
+                case Facing.NORTH:
+                    f = Facing.EAST
+            n -= 1
+        return f
 
     def __str__(self):
         return self.symbol
@@ -365,160 +393,153 @@ Fold the map into a cube, then follow the path given in the monkeys' notes. What
 """
 
 
+class Face:
+    def __init__(self, cube: "Cube", row: int, col: int):
+        self.cube: Cube = cube
+        self.row: int = row
+        self.col: int = col
+        self.neighbors: Dict[Facing, Tuple[Facing, Face]] = {}
+
+    def __eq__(self, other):
+        return isinstance(other, Face) and other.cube.dimension == self.cube.dimension and other.row == self.row and \
+            other.col == self.col
+
+    def __hash__(self):
+        return hash((self.cube.dimension, self.row, self.col))
+
+    def get_neighbor_edge(self, neighbor: Facing, map_direction: Facing) -> Tuple[Optional[Facing], Optional["Face"]]:
+        if neighbor not in self.neighbors:
+            return None, None
+        neighbor_edge, n = self.neighbors[neighbor]
+        rotation = 0
+        desired_edge = neighbor.opposite
+        while neighbor_edge != desired_edge:
+            rotation += 1
+            neighbor_edge = neighbor_edge.rotate_clockwise(1)
+        rotated_facing = map_direction.rotate_clockwise(-rotation)
+        return rotated_facing, n
+
+    def add_neighbor(self, edge: Facing, neighbor: "Face", neighbor_edge: Optional[Facing] = None):
+        if neighbor_edge is None:
+            neighbor_edge = edge.opposite
+        if edge in self.neighbors:
+            if self.neighbors[edge] == (neighbor_edge, neighbor):
+                # the face was already added
+                return
+            raise ValueError(edge)
+        elif any(f == neighbor for _, f in self.neighbors.items()):
+            raise ValueError(neighbor)
+        # add the new neighbor:
+        self.neighbors[edge] = neighbor_edge, neighbor
+        neighbor.add_neighbor(neighbor_edge, self, edge)
+        # propagate this to any of our preexisting neighbors
+        for other_neighbor_direction in set(Facing) - {edge, edge.opposite}:
+            ne, n = self.get_neighbor_edge(other_neighbor_direction, edge)
+            if ne is None or n is None:
+                continue
+            me, _ = self.get_neighbor_edge(edge, other_neighbor_direction)
+            assert me is not None
+            n.add_neighbor(ne, neighbor, me)
+
+    def contains(self, row: int, col: int) -> bool:
+        return self.row <= row < self.row + self.cube.dimension and self.col <= col < self.col + self.cube.dimension
+
+    def wraps_to(self, row: int, col: int, facing: Facing) -> Tuple[int, int, Facing]:
+        if not self.contains(row, col):
+            raise ValueError(f"<row={row}, col={col}> is not on this face!")
+        elif facing not in self.neighbors:
+            raise ValueError(f"<row={row}, col={col}> with facing {facing.symbol} does not wrap!")
+        row_offset = row - self.row
+        col_offset = col - self.col
+        neighbor_edge, neighbor = self.neighbors[facing]
+        if facing == neighbor_edge.opposite:
+            return neighbor.row + row_offset, neighbor.col + col_offset, neighbor_edge.opposite
+        new_row = neighbor.row
+        new_col = neighbor.col
+        match neighbor_edge:
+            case Facing.EAST:
+                new_col += self.cube.dimension - 1
+                match facing:
+                    case Facing.EAST:
+                        new_row += self.cube.dimension - 1 - row_offset
+                    case Facing.NORTH:
+                        new_row += self.cube.dimension - 1 - col_offset
+                    case Facing.SOUTH:
+                        new_row += col_offset
+                    case _:
+                        raise NotImplementedError(str(facing))
+            case Facing.WEST:
+                match facing:
+                    case Facing.NORTH:
+                        new_row += col_offset
+                    case Facing.WEST:
+                        new_row += self.cube.dimension - 1 - row_offset
+                    case _:
+                        raise NotImplementedError(str(facing))
+            case Facing.NORTH:
+                match facing:
+                    case Facing.WEST:
+                        new_col += row_offset
+                    case Facing.EAST:
+                        new_col += self.cube.dimension - 1 - row_offset
+                    case _:
+                        raise NotImplementedError(str(facing))
+            case Facing.SOUTH:
+                new_row += self.cube.dimension - 1
+                match facing:
+                    case Facing.EAST:
+                        new_col += row_offset
+                    case Facing.SOUTH:
+                        new_col += self.cube.dimension - 1 - col_offset
+                    case _:
+                        raise NotImplementedError(str(facing))
+            case _:
+                raise NotImplementedError(str(neighbor_edge))
+        return new_row, new_col, neighbor_edge.opposite
+
+
 class Cube(Map):
     def __init__(self, board: Map):
-        initial_empty = min(board.rows[0].keys())
-        if initial_empty % 2 != 0:
-            raise ValueError(f"{initial_empty} is not even")
-        self.dimension: int = initial_empty // 2
-        for row in range(self.dimension):
-            if (
-                    min(board.rows[row].keys()) != initial_empty
-                    or
-                    max(board.rows[row].keys()) + 1 != self.dimension * 3
-            ):
-                raise ValueError(f"Invalid row for a {self.dimension}x{self.dimension} cube: {board.rows[row]!r}")
-        for row in range(self.dimension, self.dimension * 2):
-            if (
-                    min(board.rows[row].keys()) != 0
-                    or
-                    max(board.rows[row].keys()) + 1 != self.dimension * 3
-            ):
-                raise ValueError(f"Invalid row for a {self.dimension}x{self.dimension} cube: {board.rows[row]!r}")
-        for row in range(self.dimension * 2, self.dimension * 3):
-            if (
-                    min(board.rows[row].keys()) != initial_empty
-                    or
-                    max(board.rows[row].keys()) + 1 != self.dimension * 4
-            ):
-                raise ValueError(f"Invalid row for a {self.dimension}x{self.dimension} cube: {board.rows[row]!r}")
+        total_spots = sum(len(row.keys()) for row in board.rows)
+        if total_spots % 6 != 0:
+            raise ValueError(f"The total number of spots, {total_spots}, is not divisible by 6!")
+        spots_per_face = total_spots // 6
+        self.dimension: int = isqrt(spots_per_face)
+        if (self.dimension ** 2) * 6 != total_spots:
+            raise ValueError(f"The number of spots per face, {spots_per_face}, is not a perfect square!")
         super().__init__(board.rows)
+        self.faces: List[Face] = []
+        face_matrix: List[List[Optional[Face]]] = [[None] * 6 for _ in range(6)]
+        for r, row in enumerate(range(0, self.dimension * 6, self.dimension)):
+            for c, col in enumerate(range(0, self.dimension * 6, self.dimension)):
+                face = Face(self, row, col)
+                if self.get(row, col) != Space.OUTSIDE:
+                    self.faces.append(face)
+                    face_matrix[r][c] = face
+        if len(self.faces) != 6:
+            raise ValueError(f"Found {len(self.faces)} faces but expected 6")
+        assert any(f is not None for f in face_matrix[0])
+        # now do the folding!
+        for r, mrow in enumerate(face_matrix):
+            for c, face in enumerate(mrow):
+                if face is None:
+                    continue
+                for facing in Facing:
+                    nrow = r + facing.row_delta
+                    ncol = c + facing.col_delta
+                    if 0 <= nrow < len(face_matrix) and 0 <= ncol < len(face_matrix[nrow]) \
+                            and face_matrix[nrow][ncol] is not None:
+                        face.add_neighbor(facing, face_matrix[nrow][ncol])
 
-    def face(self, row: int, col: int) -> int:
-        if row < self.dimension and self.dimension * 2 <= col < self.dimension * 3:
-            face = 1
-        elif col < self.dimension <= row < self.dimension * 2:
-            face = 2
-        elif col < self.dimension * 2 and self.dimension <= row < self.dimension * 2:
-            face = 3
-        elif col < self.dimension * 3 and self.dimension <= row < self.dimension * 2:
-            face = 4
-        elif self.dimension * 2 <= col < self.dimension * 3 and self.dimension * 2 <= row < self.dimension * 3:
-            face = 5
-        elif self.dimension * 2 <= row < self.dimension * 3 <= col < self.dimension * 4:
-            face = 6
-        else:
-            raise ValueError(f"<row={row}, col={col}> is not on the cube!")
-        return face
+    def face(self, row: int, col: int) -> Face:
+        for f in self.faces:
+            if f.contains(row, col):
+                return f
+        raise ValueError(f"<row={row}, col={col}> is not on the cube!")
 
     @lru_cache(maxsize=10000000)
     def wraps_to(self, row: int, col: int, facing: Facing) -> Tuple[int, int, Facing]:
-        face = self.face(row, col)
-        if face == 1:
-            if facing == Facing.WEST:
-                # moving to face 3
-                facing = Facing.SOUTH
-                col = self.dimension + row
-                row = self.dimension
-                assert self.face(row, col) == 3
-            elif facing == Facing.NORTH:
-                # moving to face 2
-                facing = Facing.SOUTH
-                col = self.dimension - (col - self.dimension * 2) - 1
-                row = self.dimension
-                assert self.face(row, col) == 2
-            elif facing == Facing.EAST:
-                # move to face 6
-                facing = Facing.WEST
-                row = self.dimension * 3 - row - 1
-                col = self.dimension * 4 - 1
-                assert self.face(row, col) == 6
-            else:
-                raise ValueError("This should never happen")
-        elif face == 2:
-            if facing == Facing.NORTH:
-                # moving to face 1
-                facing = Facing.SOUTH
-                col = self.dimension * 2 + (self.dimension - col - 1)
-                row = 0
-                assert self.face(row, col) == 1
-            elif facing == Facing.WEST:
-                # moving to face 6
-                facing = Facing.NORTH
-                col = self.dimension * 4 - (row - self.dimension) - 1
-                row = self.dimension * 3 - 1
-                assert self.face(row, col) == 6
-            elif facing == Facing.SOUTH:
-                # moving to face 5
-                facing = Facing.NORTH
-                col = self.dimension * 2 + (self.dimension - col - 1)
-                row = self.dimension * 3 - 1
-                assert self.face(row, col) == 5
-            else:
-                raise ValueError("This should never happen")
-        elif face == 3:
-            if facing == Facing.NORTH:
-                # moving to face 1
-                facing = Facing.EAST
-                row = col - self.dimension
-                col = self.dimension * 2
-                assert self.face(row, col) == 1
-            elif facing == Facing.SOUTH:
-                # moving to face 5
-                facing = Facing.EAST
-                row = self.dimension * 2 + (self.dimension - (col - self.dimension))
-                col = self.dimension * 2
-                assert self.face(row, col) == 5
-            else:
-                raise ValueError("This should never happen")
-        elif face == 4:
-            if facing == Facing.EAST:
-                # moving to face 6
-                facing = Facing.SOUTH
-                col = self.dimension * 4 - (row - self.dimension) - 1
-                row = self.dimension * 2
-                assert self.face(row, col) == 6
-            else:
-                raise ValueError("This should never happen")
-        elif face == 5:
-            if facing == Facing.WEST:
-                # moving to face 3
-                facing = Facing.NORTH
-                col = self.dimension * 2 - (row - self.dimension * 2) - 1
-                row = self.dimension * 2 - 1
-                assert self.face(row, col) == 3
-            elif facing == Facing.SOUTH:
-                # moving to face 2
-                facing = Facing.NORTH
-                col = self.dimension - (col - self.dimension * 2) - 1
-                row = self.dimension * 2 - 1
-                assert self.face(row, col) == 2
-            else:
-                raise ValueError("This should never happen")
-        elif face == 6:
-            if facing == Facing.NORTH:
-                # moving to face 4
-                facing = Facing.WEST
-                row = self.dimension + (self.dimension - (col - self.dimension * 3))
-                col = self.dimension * 3 - 1
-                assert self.face(row, col) == 4
-            elif facing == Facing.EAST:
-                # moving to face 1
-                facing = Facing.WEST
-                row = self.dimension - (col - self.dimension * 3) - 1
-                col = self.dimension * 3 - 1
-                assert self.face(row, col) == 1
-            elif facing == Facing.SOUTH:
-                # moving to face 2
-                facing = Facing.EAST
-                row = self.dimension * 2 - (col - self.dimension * 3) - 1
-                col = 0
-                assert self.face(row, col) == 2
-            else:
-                raise ValueError("This should never happen")
-        else:
-            raise NotImplementedError()
-        return row, col, facing
+        return self.face(row, col).wraps_to(row, col, facing)
 
 
 @challenge(day=22)
