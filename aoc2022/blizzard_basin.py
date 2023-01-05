@@ -291,11 +291,19 @@ class State:
     def num_blizzards(self, position: Position) -> int:
         return sum(1 for pos in self.blizzard_positions() if pos == position)
 
+    def all_blizzards(self) -> Iterator[Tuple[Direction, Position]]:
+        for direction, (row, col) in self.blizzards.blizzards:
+            blizzard_pos = (
+                (row + direction.row_delta * self.blizzard_state) % self.blizzards.height,
+                (col + direction.col_delta * self.blizzard_state) % self.blizzards.width
+            )
+            yield direction, blizzard_pos
+
     def blizzards_at(self, position: Position) -> Iterator[Direction]:
         for direction, (row, col) in self.blizzards.blizzards:
             blizzard_pos = (
-                (row + direction.row_delta * self.blizzard_state) % self.height,
-                (col + direction.col_delta * self.blizzard_state) % self.width
+                (row + direction.row_delta * self.blizzard_state) % self.blizzards.height,
+                (col + direction.col_delta * self.blizzard_state) % self.blizzards.width
             )
             if position == blizzard_pos:
                 yield direction
@@ -310,13 +318,17 @@ class State:
     def goal(self) -> Position:
         return self.blizzards.height, self.blizzards.width - 1
 
-    def successors(self) -> Iterator["State"]:
-        # first move the blizzards:
-        base_state = State(
+    def next_state(self) -> "State":
+        """This does not check if the expedition gets caught in a blizzard"""
+        return State(
             expedition=self.expedition,
             blizzards=self.blizzards,
             blizzard_state=self.blizzard_state + 1
         )
+
+    def successors(self) -> Iterator["State"]:
+        # first move the blizzards:
+        base_state = self.next_state()
         if base_state.is_open(base_state.expedition):
             # it is safe to wait
             yield base_state
@@ -352,26 +364,21 @@ class State:
             return cls(expedition=(-1, 0), blizzards=Blizzards(width=width, height=row - 1, blizzards=tuple(blizzards)))
 
     def __str__(self):
-        rows: List[str] = [
-            f"#{['.', 'E'][self.expedition == (-1, 0)]}{'#' * (self.width - 1)}#"
-        ]
-        for row in range(self.height):
-            line: List[str] = ["#"]
-            for col in range(self.width):
-                p = (row, col)
-                if p == self.expedition:
-                    line.append("E")
-                else:
-                    blizzards = list(self.blizzards_at(p))
-                    if len(blizzards) > 1:
-                        line.append(str(len(blizzards)))
-                    elif len(blizzards) == 1:
-                        line.append(blizzards[0].symbol)
-                    else:
-                        line.append(".")
-            line.append("#")
-            rows.append("".join(line))
-        rows.append(f"#{'#' * (self.width - 1)}{['.', 'E'][self.expedition == self.goal]}#")
+        board: List[List[str]] = [list("." * self.blizzards.width) for _ in range(self.blizzards.height)]
+        for direction, (row, col) in self.all_blizzards():
+            if board[row][col] == ".":
+                board[row][col] = direction.symbol
+            elif any(board[row][col] == d.symbol for d in Direction):
+                board[row][col] = "2"
+            else:
+                board[row][col] = chr(ord(board[row][col]) + 1)
+        er, ec = self.expedition
+        if 0 <= er < len(board) and 0 <= ec < len(board[er]):
+            board[er][ec] = "E"
+        rows = [f"#{['.', 'E'][self.expedition == (-1, 0)]}{'#' * (self.blizzards.width - 1)}#"] + [
+            f"#{''.join(row)}#"
+            for row in board
+        ] + [f"#{'#' * (self.blizzards.width - 1)}{['.', 'E'][self.expedition == self.goal]}#"]
         return "\n".join(rows)
 
 
@@ -394,7 +401,7 @@ class SearchNode:
         return self.f_cost < other.f_cost
 
     def __eq__(self, other):
-        return isinstance(other, SearchNode) and self.state == other.state and self.path_cost == other.path_cost
+        return self.state == other.state and self.path_cost == other.path_cost
 
     def __hash__(self):
         return hash((self.state, self.path_cost))
@@ -426,6 +433,30 @@ def search(state: State) -> SearchNode:
 
 @challenge(day=24)
 def fewest_minutes(path: Path) -> int:
-    initial_state = State.load(path)
-    solution = search(initial_state)
-    return solution.path_cost
+    state = State.load(path)
+    possible_positions: Set[Position] = {state.expedition}
+    rounds = 0
+    while possible_positions:
+        state = state.next_state()
+        rounds += 1
+        next_possible_positions: Set[Position] = set()
+        if rounds % 30 == 0:
+            closest = min(abs(state.goal[0] - p[0]) + abs(state.goal[1] - p[1]) for p in possible_positions)
+            print(rounds, len(possible_positions), closest)
+        for pos in possible_positions:
+            state.expedition = pos
+            if state.is_open(pos):
+                # it is safe to wait
+                next_possible_positions.add(pos)
+            for d in Direction:
+                new_pos = state.expedition[0] + d.row_delta, state.expedition[1] + d.col_delta
+                if new_pos == state.goal:
+                    return rounds
+                elif (
+                        (0 <= new_pos[0] < state.blizzards.height and 0 <= new_pos[1] < state.blizzards.width)
+                        and state.is_open(new_pos)
+                ):
+                    # it is a valid move
+                    next_possible_positions.add(new_pos)
+        possible_positions = next_possible_positions
+    raise ValueError("No solution!")
