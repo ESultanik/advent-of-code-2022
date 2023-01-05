@@ -260,8 +260,9 @@ class Blizzards:
     def __init__(self, height: int, width: int, blizzards: Tuple[Tuple[Direction, Position], ...]):
         self.height: int = height
         self.width: int = width
-        self.blizzards: Tuple[Tuple[Direction, Position], ...] = blizzards
+        self.initial_state: Tuple[Tuple[Direction, Position], ...] = blizzards
         self.max_state: int = lcm(height, width)
+        self.blizzards: List[Optional[List[List[int]]]] = [None] * self.max_state
 
     @lru_cache(maxsize=100000)
     def blizzard_positions(self, state: int) -> Tuple[Position, ...]:
@@ -270,29 +271,40 @@ class Blizzards:
                 (row + direction.row_delta * state) % self.height,
                 (col + direction.col_delta * state) % self.width
             )
-            for direction, (row, col) in self.blizzards
+            for direction, (row, col) in self.initial_state
         ))
+
+    def is_open(self, state: int, position: Position) -> bool:
+        if position[0] < 0 or position[0] >= self.height or position[1] < 0 or position[1] >= self.width:
+            return True
+        state %= self.max_state
+        if self.blizzards[state] is None:
+            self.blizzards[state] = [[0] * self.width for _ in range(self.height)]
+            for direction, (row, col) in self.initial_state:
+                new_row = (row + direction.row_delta * state) % self.height
+                new_col = (col + direction.col_delta * state) % self.width
+                self.blizzards[state][new_row][new_col] += 1
+        return self.blizzards[state][position[0]][position[1]] == 0
 
 
 class State:
-    __slots__ = "width", "height", "expedition", "blizzards", "blizzard_state"
+    __slots__ = "width", "height", "expedition", "blizzards", "blizzard_state", "goal"
 
-    def __init__(self, expedition: Position, blizzards: Blizzards, blizzard_state: int = 0):
+    def __init__(self, expedition: Position, blizzards: Blizzards, blizzard_state: int = 0,
+                 goal: Optional[Position] = None):
         self.expedition: Position = expedition
         self.blizzards: Blizzards = blizzards
         self.blizzard_state = blizzard_state % blizzards.max_state
-
-    def blizzard_positions(self) -> Tuple[Position, ...]:
-        return self.blizzards.blizzard_positions(self.blizzard_state)
+        if goal is None:
+            self.goal: Position = (self.blizzards.height, self.blizzards.width - 1)
+        else:
+            self.goal = goal
 
     def is_open(self, position: Position) -> bool:
-        return not any(position == pos for pos in self.blizzard_positions())
-
-    def num_blizzards(self, position: Position) -> int:
-        return sum(1 for pos in self.blizzard_positions() if pos == position)
+        return self.blizzards.is_open(self.blizzard_state, position)
 
     def all_blizzards(self) -> Iterator[Tuple[Direction, Position]]:
-        for direction, (row, col) in self.blizzards.blizzards:
+        for direction, (row, col) in self.blizzards.initial_state:
             blizzard_pos = (
                 (row + direction.row_delta * self.blizzard_state) % self.blizzards.height,
                 (col + direction.col_delta * self.blizzard_state) % self.blizzards.width
@@ -300,7 +312,7 @@ class State:
             yield direction, blizzard_pos
 
     def blizzards_at(self, position: Position) -> Iterator[Direction]:
-        for direction, (row, col) in self.blizzards.blizzards:
+        for direction, (row, col) in self.blizzards.initial_state:
             blizzard_pos = (
                 (row + direction.row_delta * self.blizzard_state) % self.blizzards.height,
                 (col + direction.col_delta * self.blizzard_state) % self.blizzards.width
@@ -309,14 +321,10 @@ class State:
                 yield direction
 
     def __eq__(self, other):
-        return self.expedition == other.expedition and self.blizzard_state == other.blizzard_state
+        return self.expedition == other.expedition and self.blizzard_state == other.initial_state
 
     def __hash__(self):
         return hash((self.expedition, self.blizzard_state))
-
-    @property
-    def goal(self) -> Position:
-        return self.blizzards.height, self.blizzards.width - 1
 
     def next_state(self) -> "State":
         """This does not check if the expedition gets caught in a blizzard"""
@@ -382,58 +390,7 @@ class State:
         return "\n".join(rows)
 
 
-class SearchNode:
-    __slots__ = "state", "parent", "path_cost"
-
-    def __init__(self, state: State, parent: Optional["SearchNode"] = None):
-        self.state: State = state
-        self.parent: Optional[SearchNode] = parent
-        if self.parent is None:
-            self.path_cost: int = 0
-        else:
-            self.path_cost = parent.path_cost + 1
-
-    @property
-    def f_cost(self):
-        return self.path_cost + self.heuristic
-
-    def __lt__(self, other):
-        return self.f_cost < other.f_cost
-
-    def __eq__(self, other):
-        return self.state == other.state and self.path_cost == other.path_cost
-
-    def __hash__(self):
-        return hash((self.state, self.path_cost))
-
-    @property
-    def heuristic(self) -> int:
-        goal = self.state.goal
-        return abs(goal[0] - self.state.expedition[0]) + abs(goal[1] - self.state.expedition[1])
-
-
-def search(state: State) -> SearchNode:
-    queue = [SearchNode(state)]
-    # history: Set[SearchNode] = set(queue)
-    iteration = 0
-    while queue:
-        node = heapq.heappop(queue)
-        iteration += 1
-        if iteration % 1000 == 0:
-            print(f"{iteration}\tqueue = {len(queue)}\tdepth = {node.path_cost}\tf-cost = {node.f_cost}")
-        if node.state.expedition == node.state.goal:
-            # we are done!
-            return node
-        for successor in node.state.successors():
-            succ = SearchNode(successor, parent=node)
-            # if succ not in history:
-            heapq.heappush(queue, succ)
-    raise ValueError("Did not find a path to the goal!")
-
-
-@challenge(day=24)
-def fewest_minutes(path: Path) -> int:
-    state = State.load(path)
+def calculate_fewest_minutes(state: State) -> int:
     possible_positions: Set[Position] = {state.expedition}
     rounds = 0
     while possible_positions:
@@ -445,6 +402,7 @@ def fewest_minutes(path: Path) -> int:
             print(rounds, len(possible_positions), closest)
         for pos in possible_positions:
             state.expedition = pos
+            # print(str(state))
             if state.is_open(pos):
                 # it is safe to wait
                 next_possible_positions.add(pos)
@@ -460,3 +418,9 @@ def fewest_minutes(path: Path) -> int:
                     next_possible_positions.add(new_pos)
         possible_positions = next_possible_positions
     raise ValueError("No solution!")
+
+
+@challenge(day=24)
+def fewest_minutes(path: Path) -> int:
+    state = State.load(path)
+    return calculate_fewest_minutes(state)
