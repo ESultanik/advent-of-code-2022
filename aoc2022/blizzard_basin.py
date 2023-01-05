@@ -331,7 +331,8 @@ class State:
         return State(
             expedition=self.expedition,
             blizzards=self.blizzards,
-            blizzard_state=self.blizzard_state + 1
+            blizzard_state=self.blizzard_state + 1,
+            goal=self.goal
         )
 
     def successors(self) -> Iterator["State"]:
@@ -350,7 +351,8 @@ class State:
                 yield State(
                     expedition=new_pos,
                     blizzards=base_state.blizzards,
-                    blizzard_state=base_state.blizzard_state
+                    blizzard_state=base_state.blizzard_state,
+                    goal=self.goal
                 )
 
     @classmethod
@@ -424,3 +426,23 @@ def calculate_fewest_minutes(state: State) -> int:
 def fewest_minutes(path: Path) -> int:
     state = State.load(path)
     return calculate_fewest_minutes(state)
+
+
+@challenge(day=24)
+def back_and_forth(path: Path) -> int:
+    state = State.load(path)
+    time_to_goal = calculate_fewest_minutes(state)
+    print(f"Initial time to the goal: {time_to_goal}")
+    # set the goal to be the start
+    state.expedition = state.goal
+    state.goal = (-1, 0)
+    state.blizzard_state = time_to_goal
+    time_back_to_start = calculate_fewest_minutes(state)
+    print(f"Time to get back to the start: {time_back_to_start}")
+    # now go back to the goal again
+    state.blizzard_state = time_to_goal + time_back_to_start
+    state.expedition = state.goal
+    state.goal = (state.blizzards.height, state.blizzards.width - 1)
+    time_to_goal_again = calculate_fewest_minutes(state)
+    print(f"Time to get back to the goal again: {time_to_goal_again}")
+    return time_to_goal + time_back_to_start + time_to_goal_again
